@@ -50,7 +50,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
 
-        if path in {"/hub", "/hub/"}:
+        if path in {"/hub", "/hub/", "/api/hub", "/api/hub/"}:
             self._html("index.html")
             return
 
