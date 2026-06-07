@@ -15,7 +15,7 @@ FROM node:24-bookworm-slim
 
 # node:24-bookworm-slim already has `node` at UID 1000 (HF requirement)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      nginx python3 curl ca-certificates rsync \
+      nginx python3 curl ca-certificates rsync git \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /tmp && chmod 777 /tmp
 
@@ -30,7 +30,8 @@ COPY --from=lumiverse --chown=node:node /app /apps/lumiverse
 
 # Lumiverse image already includes HF reverse-proxy auth patch
 RUN chmod +x /opt/hub/docker/*.sh /opt/hub/scripts/*.sh \
-    && echo 'upstream active_backend { server 127.0.0.1:8000; }' > /opt/hub/docker/upstream.conf
+    && echo 'upstream active_backend { server 127.0.0.1:8000; }' > /opt/hub/docker/upstream.conf \
+    && /opt/hub/docker/patch-lumiverse-sw.sh
 
 USER node
 ENV HOME=/home/node
