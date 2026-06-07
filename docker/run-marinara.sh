@@ -15,4 +15,5 @@ export MARINARA_DOCKER=true
 export ALLOW_UNAUTHENTICATED_REMOTE=true
 export IMPORT_ALLOWED_ROOTS="${DATA_ROOT}/shared"
 
-exec node /usr/local/bin/marinara-docker-entrypoint.mjs node packages/server/dist/index.js
+# Skip root-only docker entrypoint on HF (uid 1000)
+exec node packages/server/dist/index.js
