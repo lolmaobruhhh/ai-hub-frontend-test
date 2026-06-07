@@ -1,38 +1,37 @@
 #!/usr/bin/env bash
-# Force HF-safe SillyTavern settings (persisted /data config may have whitelist on).
-set -euo pipefail
+# Apply AFTER npm run init — init merges defaults that re-enable blocking.
+set -uo pipefail
 
 DATA_ROOT="${DATA_ROOT:-/data}"
 CONFIG="${DATA_ROOT}/sillytavern/config/config.yaml"
 
-mkdir -p "$(dirname "${CONFIG}")"
+[[ -f "${CONFIG}" ]] || cp /opt/hub/config/sillytavern-config.yaml "${CONFIG}"
 
-if [[ ! -f "${CONFIG}" ]]; then
-  cp /opt/hub/config/sillytavern-config.yaml "${CONFIG}"
-fi
-
-# Patch in place — nginx proxies as 127.0.0.1 with forwarded HF internal IPs
-sed -i \
-  -e 's/whitelistMode: true/whitelistMode: false/g' \
-  -e 's/enableForwardedWhitelist: true/enableForwardedWhitelist: false/g' \
-  -e 's/^listen: false/listen: true/g' \
-  "${CONFIG}" 2>/dev/null || true
-
-# hostWhitelist block — only flip the enabled line under hostWhitelist if present
-python3 - <<'PY' "${CONFIG}" 2>/dev/null || true
+python3 - "${CONFIG}" <<'PY'
 import pathlib, re, sys
+
 p = pathlib.Path(sys.argv[1])
 text = p.read_text(encoding="utf-8")
-text = re.sub(r"(?m)^listen: false", "listen: true", text)
-text = re.sub(r"(?m)^whitelistMode: true", "whitelistMode: false", text)
-text = re.sub(r"(?m)^  enabled: true(?=\n(?:  [a-z].*\n)*?hostWhitelist:)", "  enabled: false", text, count=0)
-# simpler: hostWhitelist enabled
-text = re.sub(
-    r"(hostWhitelist:\n(?:  .*\n)*?  enabled:) true",
-    r"\1 false",
-    text,
-)
-p.write_text(text, encoding="utf-8")
-PY
 
-echo "[hub] SillyTavern config patched for reverse proxy" >&2
+def sub_flag(key: str, value: str) -> None:
+    global text
+    text, n = re.subn(rf"(?m)^{re.escape(key)}:.*$", f"{key}: {value}", text)
+    if n == 0:
+        text += f"\n{key}: {value}\n"
+
+sub_flag("listen", "true")
+sub_flag("whitelistMode", "false")
+sub_flag("enableForwardedWhitelist", "false")
+sub_flag("disableCsrfProtection", "true")
+sub_flag("securityOverride", "true")
+
+# hostWhitelist block
+if re.search(r"(?m)^hostWhitelist:", text):
+    text = re.sub(r"(?m)^  enabled:.*$", "  enabled: false", text, count=1)
+    text = re.sub(r"(?m)^  scan:.*$", "  scan: false", text, count=1)
+else:
+    text += "\nhostWhitelist:\n  enabled: false\n  scan: false\n  hosts: []\n"
+
+p.write_text(text, encoding="utf-8")
+print("[hub] SillyTavern config patched (host + IP whitelist off)", flush=True)
+PY
