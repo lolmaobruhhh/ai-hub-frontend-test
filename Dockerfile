@@ -10,7 +10,7 @@
 #   3. Settings → Persistent storage → mount at /data
 #   4. Secret: OWNER_PASSWORD (for Lumiverse)
 #
-# Free tier: uses marinara:lite (smaller). Override build-arg for :latest on paid.
+# Free tier: uses marinara:lite (smaller). Change the FROM line below for :latest on paid.
 # =============================================================================
 
 # ── Hub orchestration (clone — no local COPY needed) ──────────────────────────
@@ -24,8 +24,8 @@ RUN apk add --no-cache git \
 FROM ghcr.io/sillytavern/sillytavern:latest AS sillytavern
 
 # ── Marinara (lite = ~60% smaller, fits HF free-tier build disk) ─────────────
-ARG MARINARA_IMAGE=ghcr.io/pasta-devs/marinara-engine:lite
-FROM ${MARINARA_IMAGE} AS marinara
+# HF BuildKit does not resolve ARG in FROM — image must be hardcoded here.
+FROM ghcr.io/pasta-devs/marinara-engine:lite AS marinara
 
 # ── Lumiverse ─────────────────────────────────────────────────────────────────
 FROM oven/bun:1-slim AS lumiverse-build
