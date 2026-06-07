@@ -19,6 +19,10 @@ whitelistDockerHosts: true
 basicAuthMode: false
 hostWhitelist:
   enabled: false
+  scan: false
+  hosts:
+    - .hf.space
+    - .huggingface.co
 forwardedHeaders:
   xRealIp: true
   xForwardedFor: true
