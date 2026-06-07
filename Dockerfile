@@ -24,6 +24,7 @@ COPY --from=hub-src --chown=node:node /hub/docker /opt/hub/docker/
 COPY --from=hub-src --chown=node:node /hub/scripts /opt/hub/scripts/
 COPY --from=hub-src --chown=node:node /hub/config /opt/hub/config/
 COPY --from=hub-src --chown=node:node /hub/public /opt/hub/public/
+RUN cp /opt/hub/public/index.html /opt/hub/public/hub.html
 COPY --from=sillytavern --chown=node:node /home/node/app /apps/sillytavern
 COPY --from=marinara --chown=node:node /app /apps/marinara
 COPY --from=lumiverse --chown=node:node /app /apps/lumiverse
