@@ -16,14 +16,11 @@ mkdir -p \
   "${DATA_ROOT}/marinara/uploads" \
   "${DATA_ROOT}/marinara/.env.d"
 
-# Seed SillyTavern config on first run
+# Seed SillyTavern config — always use hub template, then patch for HF proxy
 if [[ ! -f "${DATA_ROOT}/sillytavern/config/config.yaml" ]]; then
-  if [[ -f /apps/sillytavern/default/config.yaml ]]; then
-    cp /apps/sillytavern/default/config.yaml "${DATA_ROOT}/sillytavern/config/config.yaml"
-  elif [[ -f /opt/hub/config/sillytavern-config.yaml ]]; then
-    cp /opt/hub/config/sillytavern-config.yaml "${DATA_ROOT}/sillytavern/config/config.yaml"
-  fi
+  cp /opt/hub/config/sillytavern-config.yaml "${DATA_ROOT}/sillytavern/config/config.yaml"
 fi
+/opt/hub/docker/patch-sillytavern-config.sh 2>/dev/null || true
 
 # Seed Marinara .env for HF / remote access
 MARINARA_ENV="${DATA_ROOT}/marinara/.env"
