@@ -78,6 +78,9 @@
       One Hugging Face Space, three frontends, one shared library under <code>/data/shared</code>.
       Pick a UI — only one runs at a time to save RAM on the free tier.
     </p>
+    <p class="lead" style="margin-top:-1.25rem;font-size:0.9rem;">
+      Bookmark <code>/api/hub</code> (or <code>/hub.html</code>) — Lumiverse’s PWA cache breaks bare <code>/hub</code> in some browsers.
+    </p>
     <div class="grid">
       <a class="card" href="/api/switch/sillytavern">
         <strong>SillyTavern</strong>
@@ -95,7 +98,7 @@
     <div class="badge" id="active">Loading active frontend…</div>
     <footer>
       Shared data: <code>/data/shared/characters</code>, <code>/data/shared/world_info</code>,
-      <code>/data/shared/connections</code>. Return here anytime via <code>/hub</code>.
+      <code>/data/shared/connections</code>. Return here via <code>/api/hub</code> or <code>/hub.html</code>.
     </footer>
   </main>
   <script>
