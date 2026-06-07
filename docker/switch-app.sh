@@ -4,7 +4,8 @@ set -uo pipefail
 APP="${1:-}"
 DATA_ROOT="${DATA_ROOT:-/data}"
 PID_DIR="${DATA_ROOT}/.pids"
-mkdir -p "${PID_DIR}"
+LOG_DIR="${DATA_ROOT}/.logs"
+mkdir -p "${PID_DIR}" "${LOG_DIR}"
 
 if [[ -z "${APP}" ]]; then
   echo "usage: switch-app.sh <sillytavern|lumiverse|marinara>" >&2
@@ -16,42 +17,97 @@ case "${APP}" in
   *) echo "unknown app: ${APP}" >&2; exit 1 ;;
 esac
 
-echo "${APP}" > "${DATA_ROOT}/.active_app"
+port_for() {
+  case "$1" in
+    sillytavern) echo "${ST_PORT:-8000}" ;;
+    lumiverse)   echo "${LUMIVERSE_PORT:-7861}" ;;
+    marinara)    echo "${MARINARA_PORT:-7862}" ;;
+  esac
+}
+
+wait_for() {
+  local name="$1"
+  local port="$2"
+  local max="$3"
+  echo "[hub] waiting for ${name} on :${port} (up to ${max}s)..." >&2
+  for i in $(seq 1 "${max}"); do
+    if (echo >/dev/tcp/127.0.0.1/"${port}") >/dev/null 2>&1; then
+      echo "[hub] ${name} ready on :${port} (after ${i}s)" >&2
+      return 0
+    fi
+    if (( i % 15 == 0 )); then
+      echo "[hub] still waiting for ${name} :${port} (${i}s)..." >&2
+    fi
+    sleep 1
+  done
+  echo "[hub] ERROR: ${name} never opened :${port} after ${max}s" >&2
+  return 1
+}
 
 stop_one() {
   local name="$1"
   local pidfile="${PID_DIR}/${name}.pid"
+  local logpidfile="${PID_DIR}/${name}-log.pid"
+
+  if [[ -f "${logpidfile}" ]]; then
+    kill "$(cat "${logpidfile}")" 2>/dev/null || true
+    rm -f "${logpidfile}"
+  fi
+
   if [[ -f "${pidfile}" ]]; then
-    kill "$(cat "${pidfile}")" 2>/dev/null || true
+    local pid
+    pid="$(cat "${pidfile}")"
+    kill -- -"${pid}" 2>/dev/null || kill "${pid}" 2>/dev/null || true
     rm -f "${pidfile}"
   fi
-}
 
-stop_one sillytavern
-stop_one lumiverse
-stop_one marinara
+  case "${name}" in
+    sillytavern)
+      pkill -f "node server.js" 2>/dev/null || true
+      ;;
+    lumiverse)
+      pkill -f "bun run src/index.ts" 2>/dev/null || true
+      ;;
+    marinara)
+      pkill -f "packages/server/dist/index.js" 2>/dev/null || true
+      ;;
+  esac
+}
 
 start_one() {
   local name="$1"
   local script="/opt/hub/docker/run-${name}.sh"
-  # Pipe backend logs into HF container logs
-  bash "${script}" 2>&1 | while IFS= read -r line; do echo "[${name}] ${line}"; done >&2 &
+  local log="${LOG_DIR}/${name}.log"
+
+  : > "${log}"
+  setsid bash -c "exec bash \"${script}\"" >> "${log}" 2>&1 &
   echo $! > "${PID_DIR}/${name}.pid"
-  echo "[hub] started ${name} wrapper pid $(cat "${PID_DIR}/${name}.pid")" >&2
+
+  tail -n 0 -f "${log}" 2>/dev/null | sed -u "s/^/[${name}] /" >&2 &
+  echo $! > "${PID_DIR}/${name}-log.pid"
+
+  echo "[hub] started ${name} pid $(cat "${PID_DIR}/${name}.pid")" >&2
 }
 
+echo "${APP}" > "${DATA_ROOT}/.active_app"
+
+stop_one sillytavern
+stop_one lumiverse
+stop_one marinara
+sleep 1
+
+start_one "${APP}"
+
+PORT="$(port_for "${APP}")"
+WAIT_MAX=120
 case "${APP}" in
-  sillytavern) start_one sillytavern ;;
-  lumiverse)   start_one lumiverse ;;
-  marinara)    start_one marinara ;;
+  sillytavern) WAIT_MAX=300 ;;
 esac
 
-PORT="8000"
-case "${APP}" in
-  sillytavern) PORT="${ST_PORT:-8000}" ;;
-  lumiverse)   PORT="${LUMIVERSE_PORT:-7861}" ;;
-  marinara)    PORT="${MARINARA_PORT:-7862}" ;;
-esac
+if ! wait_for "${APP}" "${PORT}" "${WAIT_MAX}"; then
+  echo "[hub] switch to ${APP} failed — backend did not start" >&2
+  exit 1
+fi
 
 cat > /opt/hub/docker/upstream.conf <<EOF
 upstream active_backend {
@@ -59,7 +115,6 @@ upstream active_backend {
 }
 EOF
 
-# CRITICAL: nginx caches upstream at load — must reload after every switch
 if nginx -s reload -c /opt/hub/docker/nginx.conf 2>/dev/null; then
   echo "[hub] nginx reloaded → ${APP} on :${PORT}" >&2
 else
@@ -67,4 +122,3 @@ else
 fi
 
 echo "[hub] switched to ${APP} on internal port ${PORT}" >&2
-sleep 1
