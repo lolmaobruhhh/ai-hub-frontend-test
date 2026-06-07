@@ -41,10 +41,7 @@ start_one() {
 
 case "${APP}" in
   sillytavern) start_one sillytavern ;;
-  lumiverse)
-    /opt/hub/docker/install-lumiverse.sh || true
-    start_one lumiverse
-    ;;
+  lumiverse) start_one lumiverse ;;
   marinara) start_one marinara ;;
 esac
 
