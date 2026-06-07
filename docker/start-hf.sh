@@ -23,8 +23,23 @@ if [[ -f "${DATA_ROOT}/.active_app" ]]; then
 fi
 echo "${ACTIVE}" > "${DATA_ROOT}/.active_app"
 
-echo "[hub] starting hub-api on :7870" >&2
+HUB_API_PORT="${HUB_API_PORT:-7870}"
+export HUB_API_PORT
+
+echo "[hub] starting hub-api on :${HUB_API_PORT}" >&2
 python3 /opt/hub/docker/hub-api.py >&2 &
+
+hub_api_up() {
+  (echo >/dev/tcp/127.0.0.1/"${HUB_API_PORT}") >/dev/null 2>&1
+}
+
+for i in $(seq 1 15); do
+  if hub_api_up; then
+    echo "[hub] hub-api ready on :${HUB_API_PORT}" >&2
+    break
+  fi
+  sleep 1
+done
 
 echo "[hub] booting frontend: ${ACTIVE}" >&2
 /opt/hub/docker/switch-app.sh "${ACTIVE}" 2>&1 || echo "[hub] warn: switch-app" >&2
