@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Hub launcher API — only /hub and /api/switch|health|active."""
+"""Hub launcher API — only /hub and /api/switch|health|active|ready."""
 from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -14,6 +16,12 @@ PUBLIC = Path("/opt/hub/public")
 SWITCH_SCRIPT = "/opt/hub/docker/switch-app.sh"
 PORT = int(os.environ.get("HUB_API_PORT", "7870"))
 
+APP_PORTS = {
+    "sillytavern": int(os.environ.get("ST_PORT", "8000")),
+    "lumiverse": int(os.environ.get("LUMIVERSE_PORT", "7861")),
+    "marinara": int(os.environ.get("MARINARA_PORT", "7862")),
+}
+
 
 def active_app() -> str:
     path = os.path.join(DATA_ROOT, ".active_app")
@@ -21,6 +29,18 @@ def active_app() -> str:
         with open(path, encoding="utf-8") as fh:
             return fh.read().strip() or "sillytavern"
     return "sillytavern"
+
+
+def backend_ready(app: str | None = None) -> bool:
+    app = app or active_app()
+    port = APP_PORTS.get(app)
+    if port is None:
+        return False
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=1):
+            return True
+    except OSError:
+        return False
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -44,8 +64,15 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         self.wfile.write(body)
+
+    def _run_switch_async(self, app: str) -> None:
+        try:
+            subprocess.run([SWITCH_SCRIPT, app], check=False, timeout=600)
+        except Exception as exc:
+            print(f"[hub-api] switch to {app} failed: {exc}", flush=True)
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
@@ -58,29 +85,44 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"status": "ok", "active": active_app()})
             return
 
+        if path == "/api/ready":
+            app = active_app()
+            ready = backend_ready(app)
+            self._json(200, {"active": app, "ready": ready})
+            return
+
         if path == "/api/active":
             self._json(200, {"active": active_app()})
             return
 
         if path.startswith("/api/switch/"):
             app = path.rsplit("/", 1)[-1].lower()
-            if app not in {"sillytavern", "lumiverse", "marinara"}:
+            if app not in APP_PORTS:
                 self._json(400, {"error": "unknown app"})
                 return
-            try:
-                subprocess.run([SWITCH_SCRIPT, app], check=True, timeout=120)
-            except subprocess.CalledProcessError as exc:
-                self._json(500, {"error": "switch failed", "detail": str(exc)})
-                return
-            except subprocess.TimeoutExpired:
-                self._json(504, {"error": "switch timed out"})
-                return
-            self.send_response(302)
-            self.send_header("Location", "/")
-            self.end_headers()
+            threading.Thread(
+                target=self._run_switch_async,
+                args=(app,),
+                daemon=True,
+            ).start()
+            self._html("switching.html")
             return
 
         self._json(404, {"error": "not found"})
+
+    def do_HEAD(self) -> None:
+        path = urlparse(self.path).path
+        if path.startswith("/api/switch/"):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            return
+        if path in {"/hub", "/hub/", "/api/hub", "/api/hub/"}:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            return
+        self.do_GET()
 
 
 def main() -> None:
