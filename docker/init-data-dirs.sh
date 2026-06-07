@@ -47,8 +47,5 @@ fi
 # Lumiverse first-run marker (setup wizard skipped in hub mode)
 touch "${DATA_ROOT}/lumiverse/.hub-initialized"
 
-# Fix ownership for node (SillyTavern + Marinara) and world-readable shared lib
-if id node >/dev/null 2>&1; then
-  chown -R node:node "${DATA_ROOT}/sillytavern" "${DATA_ROOT}/marinara" 2>/dev/null || true
-fi
-chmod -R a+rX "${DATA_ROOT}/shared" 2>/dev/null || true
+# HF runs as uid 1000 — avoid chown, just ensure writable
+chmod -R u+rwX "${DATA_ROOT}" 2>/dev/null || true
