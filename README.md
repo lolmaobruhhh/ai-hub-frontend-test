@@ -69,7 +69,7 @@ Do **not** paste only the Dockerfile without `README.md` — HF needs the yaml f
 
 **Quick switch links** (work even when the launcher page doesn’t):
 
-- SillyTavern: `/api/switch/sillytavern`
+- SillyTavern: `/api/switch/sillytavern` (first launch can take **1–3 minutes** — wait on the “Switching…” page)
 - Lumiverse: `/api/switch/lumiverse`
 - Marinara: `/api/switch/marinara`
 
