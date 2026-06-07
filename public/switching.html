@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Switching frontend…</title>
-  <meta http-equiv="refresh" content="8;url=/" />
   <style>
     body {
       margin: 0;
@@ -14,10 +13,50 @@
       font-family: system-ui, sans-serif;
       background: #0f1117;
       color: #e8ecf4;
+      padding: 2rem;
+      text-align: center;
     }
+    p { max-width: 32rem; line-height: 1.5; }
+    .muted { color: #8b95a8; font-size: 0.9rem; }
   </style>
 </head>
 <body>
-  <p>Switching frontend… you will be redirected shortly.</p>
+  <div>
+    <p id="status">Switching frontend…</p>
+    <p class="muted" id="hint">SillyTavern can take 1–3 minutes on first launch.</p>
+  </div>
+  <script>
+    const status = document.getElementById('status');
+    const hint = document.getElementById('hint');
+    let tries = 0;
+
+    async function poll() {
+      tries += 1;
+      try {
+        const readyRes = await fetch('/api/ready', { cache: 'no-store' });
+        const readyData = await readyRes.json();
+        const app = readyData.active || 'frontend';
+        status.textContent = `Starting ${app}… (${tries * 2}s)`;
+
+        if (readyData.ready) {
+          const page = await fetch('/', { method: 'GET', cache: 'no-store' });
+          if (page.ok) {
+            window.location.replace('/');
+            return;
+          }
+        }
+      } catch (_) {
+        status.textContent = `Waiting for backend… (${tries * 2}s)`;
+      }
+
+      if (tries > 180) {
+        hint.textContent = 'Still starting. Check Space Logs, then refresh /.';
+        return;
+      }
+      setTimeout(poll, 2000);
+    }
+
+    poll();
+  </script>
 </body>
 </html>
