@@ -15,7 +15,12 @@ chmod -R u+rwX "${DATA_ROOT}" /tmp/nginx 2>/dev/null || true
 /opt/hub/scripts/sync-shared-data.sh 2>&1 || true
 
 ACTIVE="${ACTIVE_APP:-sillytavern}"
-[[ -f "${DATA_ROOT}/.active_app" ]] && ACTIVE="$(cat "${DATA_ROOT}/.active_app")"
+if [[ -f "${DATA_ROOT}/.active_app" ]]; then
+  saved="$(cat "${DATA_ROOT}/.active_app")"
+  case "${saved}" in
+    sillytavern|lumiverse|marinara) ACTIVE="${saved}" ;;
+  esac
+fi
 echo "${ACTIVE}" > "${DATA_ROOT}/.active_app"
 
 echo "[hub] starting hub-api on :7870" >&2
