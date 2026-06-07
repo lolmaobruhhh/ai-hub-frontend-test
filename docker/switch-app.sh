@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
 APP="${1:-}"
 DATA_ROOT="${DATA_ROOT:-/data}"
@@ -34,15 +34,16 @@ stop_one marinara
 start_one() {
   local name="$1"
   local script="/opt/hub/docker/run-${name}.sh"
-  nohup bash "${script}" > "${DATA_ROOT}/${name}.log" 2>&1 &
+  # Pipe backend logs into HF container logs
+  bash "${script}" 2>&1 | while IFS= read -r line; do echo "[${name}] ${line}"; done >&2 &
   echo $! > "${PID_DIR}/${name}.pid"
-  echo "[hub] started ${name} pid $(cat "${PID_DIR}/${name}.pid")" >&2
+  echo "[hub] started ${name} wrapper pid $(cat "${PID_DIR}/${name}.pid")" >&2
 }
 
 case "${APP}" in
   sillytavern) start_one sillytavern ;;
-  lumiverse) start_one lumiverse ;;
-  marinara) start_one marinara ;;
+  lumiverse)   start_one lumiverse ;;
+  marinara)    start_one marinara ;;
 esac
 
 PORT="8000"
@@ -59,4 +60,3 @@ upstream active_backend {
 EOF
 
 echo "[hub] switched to ${APP} on internal port ${PORT}" >&2
-sleep 2
