@@ -64,7 +64,7 @@ Do **not** paste only the Dockerfile without `README.md` — HF needs the yaml f
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| React **404 Not Found** at `/hub` | Lumiverse’s **PWA service worker** serves its cached SPA for `/hub` | Use **`/api/hub`** or **`/hub.html`** instead; or switch directly via `/api/switch/sillytavern` |
+| React **404 Not Found** at `/hub` | Lumiverse’s **PWA service worker** serves its cached SPA for `/hub` after first visit | Use **`/api/hub`** or **`/hub.html`** (not bare `/hub`); hub page auto-clears the PWA cache. Incognito worked because it had no service worker. |
 | Lumiverse **sign-in error** | BetterAuth `baseURL` was `http://localhost:7861` | Rebuild; set `PUBLIC_ORIGIN` secret if auto-detect fails; check Logs for `[lumiverse] AUTH_BASE_URL=https://…` |
 
 **Quick switch links** (work even when the launcher page doesn’t):
