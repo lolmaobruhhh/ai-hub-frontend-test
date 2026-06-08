@@ -6,6 +6,7 @@ LUMIVERSE_PORT="${LUMIVERSE_PORT:-7861}"
 cd /apps/lumiverse
 
 export PATH="/usr/local/bin:/usr/bin:/bin:${PATH:-}"
+export GIT_EXEC_PATH="${GIT_EXEC_PATH:-/usr/lib/git-core}"
 export NODE_ENV=production
 export PORT="${LUMIVERSE_PORT}"
 export DATA_DIR="${DATA_ROOT}/lumiverse"
