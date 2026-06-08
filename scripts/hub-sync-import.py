@@ -760,10 +760,22 @@ def sync_st_to_shared(state: dict) -> int:
         if state["characters"].get(rel) == sig and prev.get("source_id") == path.name:
             continue
 
+        dest = SHARED / rel
         try:
-            shutil.copy2(path, SHARED / rel)
+            if path.resolve() == dest.resolve():
+                state["characters"][f"st_src:{path.name}"] = sig
+                state["characters"][rel] = file_sig(dest)
+                state["exports"][ckey] = {
+                    "file": rel,
+                    "filename": dest_name,
+                    "updated": sig,
+                    "name": name,
+                    "source_id": path.name,
+                }
+                continue
+            shutil.copy2(path, dest)
             state["characters"][f"st_src:{path.name}"] = sig
-            state["characters"][rel] = file_sig(SHARED / rel)
+            state["characters"][rel] = file_sig(dest)
             state["exports"][ckey] = {
                 "file": rel,
                 "filename": dest_name,
