@@ -45,6 +45,15 @@ HUB_ONLY_PATHS = {
     "/hub.html",
 }
 
+# Root-level paths Vite SPAs still request without Referer (dynamic import / PWA).
+ORPHAN_APP_PATH_PREFIXES = (
+    "/assets/",
+    "/logo-",
+    "/icon-",
+    "/manifest",
+    "/registerSW.js",
+)
+
 HOP_BY_HOP = {
     "connection",
     "keep-alive",
@@ -62,6 +71,16 @@ SKIP_REQUEST_HEADERS = {
     "content-length",
     "transfer-encoding",
     "accept-encoding",
+    # Avoid 304 revalidation serving pre-v10 poisoned cached bodies in browsers.
+    "if-none-match",
+    "if-modified-since",
+}
+
+SKIP_RESPONSE_CACHE_HEADERS = {
+    "cache-control",
+    "etag",
+    "last-modified",
+    "expires",
 }
 
 MAX_JS_REWRITE_BYTES = int(os.environ.get("MAX_JS_REWRITE_BYTES", "524288"))
@@ -125,6 +144,18 @@ def app_from_origin(origin: str) -> str | None:
     for app, prefix in APP_PREFIXES.items():
         if origin.endswith(prefix):
             return app
+    return None
+
+
+def app_from_cookie(cookie_header: str) -> str | None:
+    if not cookie_header:
+        return None
+    for part in cookie_header.split(";"):
+        part = part.strip()
+        if part.startswith("hub_app="):
+            app = part.split("=", 1)[1].strip().lower()
+            if app in PORTS:
+                return app
     return None
 
 
@@ -194,6 +225,32 @@ def strip_lumiverse_pwa_html(text: str) -> str:
         flags=re.DOTALL | re.IGNORECASE,
     )
     return text
+
+
+ST_SW_CLEANUP = """<script>
+/* hub: unregister stale root-scoped service workers (breaks ST under /apps/sillytavern/) */
+(function () {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.getRegistrations().then(function (regs) {
+    return Promise.all(regs.map(function (r) { return r.unregister(); }));
+  }).catch(function () {});
+  if ("caches" in window) {
+    caches.keys().then(function (keys) {
+      return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+    }).catch(function () {});
+  }
+})();
+</script>"""
+
+
+def inject_st_sw_cleanup(text: str) -> str:
+    if "hub: unregister stale root-scoped service workers" in text:
+        return text
+    head = re.search(r"<head([^>]*)>", text, re.I)
+    if head:
+        pos = head.end()
+        return text[:pos] + f"\n  {ST_SW_CLEANUP}" + text[pos:]
+    return ST_SW_CLEANUP + text
 
 
 def rewrite_root_paths(text: str, prefix: str) -> str:
@@ -315,6 +372,28 @@ def patch_lumiverse_router_basename(text: str, prefix: str) -> str:
     return text
 
 
+def patch_spa_asset_paths(text: str, prefix: str) -> str:
+    """Prefix bare /assets/ URLs in Vite chunks (dynamic import often omits Referer)."""
+    if f"{prefix}/assets/" in text:
+        return text
+
+    def repl_quoted(match: re.Match[str]) -> str:
+        quote, path = match.group(1), match.group(2)
+        if path.startswith("/assets/") and not path.startswith(prefix + "/"):
+            return f"{quote}{prefix}{path}{quote}"
+        return match.group(0)
+
+    def repl_backtick(match: re.Match[str]) -> str:
+        path = match.group(1)
+        if path.startswith("/assets/") and not path.startswith(prefix + "/"):
+            return f"`{prefix}{path}`"
+        return match.group(0)
+
+    text = re.sub(r'(["\'])(/assets/[^"\'\\]*)\1', repl_quoted, text)
+    text = re.sub(r"`(/assets/[^`\\]*)`", repl_backtick, text)
+    return text
+
+
 def patch_lumiverse_js(text: str, prefix: str) -> str:
     """Apply basename + /api* prefixing for Lumiverse entry/lazy chunks."""
     text = patch_lumiverse_router_basename(text, prefix)
@@ -341,11 +420,17 @@ def rewrite_app_body(data: bytes, content_type: str, prefix: str, app: str = "")
     except UnicodeDecodeError:
         return data
     if "javascript" in ct:
+        if app in ("lumiverse", "marinara"):
+            text = patch_spa_asset_paths(text, prefix)
         if app == "lumiverse":
-            patched = patch_lumiverse_js(text, prefix)
-            if patched != text:
-                return patched.encode("utf-8")
-            return data
+            text = patch_lumiverse_js(text, prefix)
+            return text.encode("utf-8")
+        if app == "marinara":
+            if js_already_build_patched(text, app):
+                return text.encode("utf-8")
+            if len(data) <= MAX_JS_REWRITE_BYTES:
+                text = rewrite_js_api_paths(text, prefix)
+            return text.encode("utf-8")
         if js_already_build_patched(text, app):
             return data
         if len(data) > MAX_JS_REWRITE_BYTES:
@@ -359,8 +444,25 @@ def rewrite_app_body(data: bytes, content_type: str, prefix: str, app: str = "")
             text = fix_base_href(text, prefix)
             if app == "lumiverse":
                 text = strip_lumiverse_pwa_html(text)
+            if app == "sillytavern":
+                text = inject_st_sw_cleanup(text)
         text = rewrite_root_paths(text, prefix)
     return text.encode("utf-8")
+
+
+def proxy_cache_headers(app: str, content_type: str) -> dict[str, str]:
+    """Override backend cache headers for subpath apps (ST had stale gzip in browser cache)."""
+    ct = content_type.lower()
+    if app == "sillytavern" and any(
+        token in ct for token in ("text/html", "javascript", "text/css")
+    ):
+        return {
+            "Cache-Control": "no-store, must-revalidate",
+            "Pragma": "no-cache",
+        }
+    if "javascript" in ct:
+        return {"Cache-Control": "no-cache"}
+    return {}
 
 
 def rewrite_location(location: str, prefix: str) -> str:
@@ -371,7 +473,13 @@ def rewrite_location(location: str, prefix: str) -> str:
     return prefix + location
 
 
-def resolve_route(path: str, referer: str, query: str = "", origin: str = "") -> tuple[str, str]:
+def resolve_route(
+    path: str,
+    referer: str,
+    query: str = "",
+    origin: str = "",
+    cookie: str = "",
+) -> tuple[str, str]:
     """Return (app_name, backend_path)."""
     for app, prefix in APP_PREFIXES.items():
         if path == prefix:
@@ -379,9 +487,19 @@ def resolve_route(path: str, referer: str, query: str = "", origin: str = "") ->
         if path.startswith(prefix + "/"):
             return app, path[len(prefix) :] or "/"
 
-    referer_app = app_from_referer(referer) or app_from_origin(origin)
-    if referer_app:
-        return referer_app, path
+    context_app = (
+        app_from_referer(referer)
+        or app_from_origin(origin)
+        or app_from_cookie(cookie)
+    )
+    if context_app and (
+        any(path.startswith(prefix) for prefix in ORPHAN_APP_PATH_PREFIXES)
+        or path in {"/sw.js", "/favicon.ico", "/manifest.webmanifest"}
+    ):
+        return context_app, path
+
+    if context_app:
+        return context_app, path
 
     if path == "/":
         if "logs=" in query:
@@ -393,7 +511,7 @@ def resolve_route(path: str, referer: str, query: str = "", origin: str = "") ->
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
-    server_version = "hub-gateway/10"
+    server_version = "hub-gateway/14"
 
     def log_message(self, fmt: str, *args) -> None:
         print(f"[gateway] {self.address_string()} - {fmt % args}", flush=True)
@@ -425,6 +543,18 @@ class Handler(BaseHTTPRequestHandler):
             path.read_bytes(),
             "text/html; charset=utf-8",
             {"Cache-Control": cache_control},
+        )
+
+    def _send_public_file(self, filename: str, content_type: str) -> None:
+        path = PUBLIC / filename
+        if not path.is_file():
+            self._send_json(404, {"error": f"{filename} missing"})
+            return
+        self._send_bytes(
+            200,
+            path.read_bytes(),
+            content_type,
+            {"Cache-Control": "public, max-age=86400"},
         )
 
     def _redirect(self, location: str) -> None:
@@ -476,6 +606,24 @@ class Handler(BaseHTTPRequestHandler):
                     "port_open": port_open(port),
                     "http_ready": backend_ready(name),
                 }
+            shared_chars = DATA_ROOT / "shared" / "characters"
+            hub_cards = sorted(
+                p.name
+                for p in shared_chars.glob("hub_*.png")
+                if p.is_file()
+            ) if shared_chars.is_dir() else []
+            sync_state = DATA_ROOT / ".hub-sync" / "import-state.json"
+            sync_hint = {
+                "owner_password_set": bool(
+                    os.environ.get("OWNER_PASSWORD") or os.environ.get("HUB_SYNC_PASSWORD")
+                ),
+                "lumiverse_import_requires": "OWNER_PASSWORD in HF Secrets (Lumiverse login password)",
+                "canonical_cards": hub_cards,
+                "st_storage": str(DATA_ROOT / "sillytavern" / "data" / "default-user"),
+                "lumiverse_storage": str(DATA_ROOT / "lumiverse"),
+                "marinara_storage": str(DATA_ROOT / "marinara"),
+                "sync_state_file": str(sync_state) if sync_state.is_file() else None,
+            }
             self._send_json(
                 200,
                 {
@@ -483,7 +631,12 @@ class Handler(BaseHTTPRequestHandler):
                     "gateway_version": self.server_version,
                     "active_fallback": active_app(),
                     "apps": probes,
-                    "shared_characters": str(DATA_ROOT / "shared" / "characters"),
+                    "shared_characters": str(shared_chars),
+                    "sync": sync_hint,
+                    "single_app_note": (
+                        "Legacy single-app mode served ST at / (no subpath). "
+                        "Parallel mode requires /apps/sillytavern/ — open that URL, not /."
+                    ),
                 },
             )
             return True
@@ -491,6 +644,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/sync" and method == "GET":
             threading.Thread(target=self._run_sync_background, daemon=True).start()
             self._send_json(200, {"ok": True, "message": "sync started in background"})
+            return True
+
+        if path == "/favicon.ico" and method == "GET":
+            self._send_public_file("favicon.ico", "image/x-icon")
+            return True
+
+        if path == "/sw.js" and method == "GET":
+            self._send_public_file("sw.js", "application/javascript; charset=utf-8")
             return True
 
         # Legacy shortcuts → prefixed app URLs (new tab friendly).
@@ -547,7 +708,8 @@ class Handler(BaseHTTPRequestHandler):
     def _proxy_http(self, method: str) -> None:
         path, query, referer = self._parsed()
         origin = self.headers.get("Origin", "")
-        app, backend_path = resolve_route(path, referer, query, origin)
+        cookie = self.headers.get("Cookie", "")
+        app, backend_path = resolve_route(path, referer, query, origin, cookie)
         if app == "hub":
             self._send_html("index.html")
             return
@@ -576,6 +738,8 @@ class Handler(BaseHTTPRequestHandler):
                 lower = key.lower()
                 if lower in HOP_BY_HOP or lower == "content-length":
                     continue
+                if prefix and lower in SKIP_RESPONSE_CACHE_HEADERS:
+                    continue
                 if lower == "content-encoding":
                     # Drop encoding only when we successfully decoded; otherwise keep
                     # header + compressed bytes intact (avoids binary garbage in browser).
@@ -586,8 +750,14 @@ class Handler(BaseHTTPRequestHandler):
                 if lower == "location" and prefix:
                     value = rewrite_location(value, prefix)
                 self.send_header(key, value)
-            if prefix and "javascript" in content_type.lower():
-                self.send_header("Cache-Control", "no-cache")
+            if prefix:
+                for key, value in proxy_cache_headers(app, content_type).items():
+                    self.send_header(key, value)
+                if "text/html" in content_type.lower():
+                    self.send_header(
+                        "Set-Cookie",
+                        f"hub_app={app}; Path=/; SameSite=Lax; Max-Age=86400",
+                    )
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
@@ -600,7 +770,8 @@ class Handler(BaseHTTPRequestHandler):
     def _proxy_websocket(self) -> None:
         path, query, referer = self._parsed()
         origin = self.headers.get("Origin", "")
-        app, backend_path = resolve_route(path, referer, query, origin)
+        cookie = self.headers.get("Cookie", "")
+        app, backend_path = resolve_route(path, referer, query, origin, cookie)
         if app == "hub":
             self.send_error(400, "WebSocket not supported on hub route")
             return
