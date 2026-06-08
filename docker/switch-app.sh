@@ -63,11 +63,17 @@ upstream active_backend {
 }
 EOF
 
-if nginx -s reload -c /opt/hub/docker/nginx.conf 2>/dev/null; then
-  echo "[hub] nginx reloaded → ${APP} on :${PORT}" >&2
-else
-  echo "[hub] nginx reload skipped (not running yet)" >&2
-fi
+for attempt in 1 2 3; do
+  if nginx -s reload -c /opt/hub/docker/nginx.conf 2>/dev/null; then
+    echo "[hub] nginx reloaded → ${APP} on :${PORT}" >&2
+    break
+  fi
+  if [[ "${attempt}" -eq 3 ]]; then
+    echo "[hub] nginx reload skipped (not running yet)" >&2
+  else
+    sleep 1
+  fi
+done
 
 /opt/hub/scripts/sync-shared-data.sh 2>&1 || echo "[hub] warn: sync-shared-data" >&2
 
