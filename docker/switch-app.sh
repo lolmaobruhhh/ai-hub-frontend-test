@@ -75,6 +75,8 @@ for attempt in 1 2 3; do
   fi
 done
 
-/opt/hub/scripts/sync-shared-data.sh 2>&1 || echo "[hub] warn: sync-shared-data" >&2
+if [[ "${HUB_SKIP_SYNC:-}" != "1" ]]; then
+  /opt/hub/scripts/sync-shared-data.sh 2>&1 || echo "[hub] warn: sync-shared-data" >&2
+fi
 
 echo "[hub] switched to ${APP} on internal port ${PORT}" >&2
