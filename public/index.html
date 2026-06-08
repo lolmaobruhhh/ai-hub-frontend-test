@@ -26,15 +26,10 @@
       justify-content: center;
       padding: 2rem;
     }
-    main {
-      width: min(720px, 100%);
-    }
+    main { width: min(720px, 100%); }
     h1 { margin: 0 0 0.5rem; font-size: 1.8rem; }
     p.lead { color: var(--muted); margin: 0 0 2rem; line-height: 1.5; }
-    .grid {
-      display: grid;
-      gap: 1rem;
-    }
+    .grid { display: grid; gap: 1rem; }
     @media (min-width: 600px) {
       .grid { grid-template-columns: repeat(3, 1fr); }
     }
@@ -47,6 +42,7 @@
       text-decoration: none;
       color: inherit;
       transition: transform 0.15s, border-color 0.15s;
+      cursor: pointer;
     }
     a.card:hover {
       transform: translateY(-2px);
@@ -69,43 +65,44 @@
       font-size: 0.85rem;
       line-height: 1.5;
     }
+    code { font-size: 0.85em; }
   </style>
 </head>
 <body>
   <main>
     <h1>AI Frontends Hub</h1>
     <p class="lead">
-      One Hugging Face Space, three frontends, one shared character library.
-      All three backends stay running — switching is instant (recommended: 16GB+ RAM).
+      All three frontends run at once. Each opens in a <strong>new tab</strong> — use them in parallel
+      (SillyTavern + Lumiverse + Marinara simultaneously).
     </p>
     <p class="lead" style="margin-top:-1.25rem;font-size:0.9rem;">
-      After using Lumiverse, open the hub via <strong><a href="/api/hub" style="color:var(--accent2)">/api/hub</a></strong>
-      or <strong><a href="/hub.html" style="color:var(--accent2)">/hub.html</a></strong>
-      (not bare <code>/hub</code> — Lumiverse’s PWA intercepts it).
+      Characters live in one shared library: <code>/data/shared/characters/hub_{name}.png</code>
+      (one file per character, no per-app clones).
     </p>
     <div class="grid">
-      <a class="card" href="/sillytavern">
+      <a class="card" href="/apps/sillytavern/" target="_blank" rel="noopener noreferrer">
         <strong>SillyTavern</strong>
-        <span>Classic ST UI. Hub sync copies shared cards into ST.</span>
+        <span>Classic ST UI — symlinks shared cards directly.</span>
       </a>
-      <a class="card" href="/lumiverse">
+      <a class="card" href="/apps/lumiverse/" target="_blank" rel="noopener noreferrer">
         <strong>Lumiverse</strong>
-        <span>Bun + SQLite frontend. Auto-imports shared cards on sync.</span>
+        <span>Bun + SQLite. Imports from shared library once.</span>
       </a>
-      <a class="card" href="/marinara">
+      <a class="card" href="/apps/marinara/" target="_blank" rel="noopener noreferrer">
         <strong>Marinara Engine</strong>
-        <span>Roleplay / game engine. Auto-imports from shared library.</span>
+        <span>Roleplay engine. Imports from shared library once.</span>
       </a>
     </div>
-    <div class="badge" id="active">Loading active frontend…</div>
+    <div class="badge" id="status">Checking backends…</div>
     <footer>
-      Shared data: <code>/data/shared/characters</code>, <code>/data/shared/world_info</code>,
-      <code>/data/shared/connections</code>. Return here via <code>/api/hub</code> or <code>/hub.html</code>.
+      Hub stays on this page. App URLs:
+      <code>/apps/sillytavern/</code>,
+      <code>/apps/lumiverse/</code>,
+      <code>/apps/marinara/</code>.
+      Return here via <code>/api/hub</code> or <code>/</code>.
     </footer>
   </main>
   <script>
-    // Lumiverse's PWA service worker hijacks /hub after first visit.
-    // Clear it when the hub loads so /hub and /api/hub keep working.
     (async function clearLumiversePwa() {
       if (!('serviceWorker' in navigator)) return;
       try {
@@ -118,10 +115,15 @@
       } catch (_) { /* ignore */ }
     })();
 
-    fetch('/api/active').then(r => r.json()).then(d => {
-      document.getElementById('active').textContent = 'Currently active: ' + (d.active || 'unknown');
+    fetch('/api/ready').then(r => r.json()).then(d => {
+      const apps = d.ready || {};
+      const up = Object.entries(apps).filter(([, v]) => v).map(([k]) => k);
+      const el = document.getElementById('status');
+      el.textContent = up.length
+        ? `Backends ready: ${up.join(', ')}`
+        : 'Backends still starting…';
     }).catch(() => {
-      document.getElementById('active').textContent = 'Hub API starting…';
+      document.getElementById('status').textContent = 'Hub API starting…';
     });
   </script>
 </body>
