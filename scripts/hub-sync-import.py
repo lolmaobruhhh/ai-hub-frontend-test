@@ -69,7 +69,19 @@ def resolve_public_origin() -> str:
     return ""
 
 
-def extract_bearer_token(payload: object, set_cookies: list[str]) -> str | None:
+def extract_bearer_token(
+    payload: object,
+    set_cookies: list[str],
+    response_headers: object | None = None,
+) -> str | None:
+    if response_headers is not None:
+        for header_name in ("set-auth-token", "Set-Auth-Token"):
+            try:
+                token = response_headers.get(header_name)
+            except Exception:
+                token = None
+            if isinstance(token, str) and token.strip():
+                return token.strip()
     if isinstance(payload, dict):
         token = payload.get("token")
         if isinstance(token, str) and token.strip():
@@ -89,6 +101,34 @@ def extract_bearer_token(payload: object, set_cookies: list[str]) -> str | None:
                 if marker in part:
                     return part.split(marker, 1)[1].split(";", 1)[0].strip()
     return None
+
+
+def lumiverse_api_headers(auth_headers: dict[str, str]) -> dict[str, str]:
+    hdrs = dict(auth_headers)
+    hdrs.setdefault("Accept", "application/json")
+    hdrs["Accept-Encoding"] = "identity"
+    public_origin = resolve_public_origin()
+    if public_origin:
+        try:
+            host = public_origin.split("://", 1)[1]
+            hdrs["Host"] = host
+            hdrs["X-Forwarded-Host"] = host
+            hdrs["X-Forwarded-Proto"] = "https"
+        except IndexError:
+            pass
+    hdrs["X-Forwarded-For"] = "127.0.0.1"
+    hdrs["X-Real-IP"] = "127.0.0.1"
+    return hdrs
+
+
+def decode_json_response(raw: str, status: int) -> object:
+    if not raw or not raw.strip():
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        preview = raw[:240].replace("\n", " ").replace("\r", " ")
+        return {"error": "non-json response", "preview": preview, "status": status}
 
 
 def log(msg: str) -> None:
@@ -215,7 +255,7 @@ def http_json(
     try:
         with open_fn(req, timeout=120) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
-            return resp.status, json.loads(raw) if raw else {}
+            return resp.status, decode_json_response(raw, resp.status)
     except urllib.error.HTTPError as exc:
         raw = exc.read().decode("utf-8", errors="replace")
         try:
@@ -282,14 +322,10 @@ def multipart_batch(
     try:
         with open_fn(req, timeout=300) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
-            return resp.status, json.loads(raw) if raw else {}
+            return resp.status, decode_json_response(raw, resp.status)
     except urllib.error.HTTPError as exc:
         raw = exc.read().decode("utf-8", errors="replace")
-        try:
-            payload = json.loads(raw) if raw else {"error": raw}
-        except json.JSONDecodeError:
-            payload = {"error": raw or exc.reason}
-        return exc.code, payload
+        return exc.code, decode_json_response(raw, exc.code)
 
 
 def lumiverse_session() -> tuple[urllib.request.OpenerDirector, dict[str, str]] | None:
@@ -321,11 +357,14 @@ def lumiverse_session() -> tuple[urllib.request.OpenerDirector, dict[str, str]] 
         headers=sign_in_headers,
         method="POST",
     )
+    response_headers = None
+    set_cookies: list[str] = []
+    payload: object = {}
     try:
         with opener.open(req, timeout=120) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
-            payload = json.loads(raw) if raw else {}
-            set_cookies = []
+            payload = decode_json_response(raw, resp.status)
+            response_headers = resp.headers
             if hasattr(resp.headers, "get_all"):
                 set_cookies = list(resp.headers.get_all("Set-Cookie") or [])
             elif resp.headers.get("Set-Cookie"):
@@ -343,15 +382,15 @@ def lumiverse_session() -> tuple[urllib.request.OpenerDirector, dict[str, str]] 
         return None
 
     auth_headers: dict[str, str] = {}
-    token = extract_bearer_token(payload, set_cookies)
+    token = extract_bearer_token(payload, set_cookies, response_headers)
     if token:
         auth_headers["Authorization"] = f"Bearer {token}"
     else:
         log(
-            f"lumiverse sign-in for '{username}' ok but no bearer token — "
-            "falling back to session cookies"
+            f"lumiverse sign-in for '{username}' ok but no bearer token "
+            "(missing set-auth-token header) — sync may fail; check OWNER_PASSWORD"
         )
-    return opener, auth_headers
+    return opener, lumiverse_api_headers(auth_headers)
 
 
 def marinara_character_names() -> set[str]:
@@ -555,12 +594,15 @@ def export_lumiverse_to_shared(state: dict) -> int:
     base = f"http://127.0.0.1:{LUMIVERSE_PORT}"
     status, payload = http_json(
         "GET",
-        f"{base}/api/v1/characters/?limit=500&offset=0",
+        f"{base}/api/v1/characters?limit=500&offset=0",
         headers=auth_headers,
         opener=opener,
     )
     if status >= 400 or not isinstance(payload, dict):
         log(f"lumiverse list failed ({status}): {payload}")
+        return 0
+    if payload.get("error") == "non-json response":
+        log(f"lumiverse list returned HTML/non-JSON ({status}): {payload.get('preview', '')[:120]}")
         return 0
 
     chars = payload.get("data") or []
@@ -878,34 +920,38 @@ def import_lorebooks_to_marinara(state: dict) -> int:
 
 
 def main() -> int:
-    log(f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} syncing shared library")
-    state = load_state()
-    cleanup_shared_junk(state)
+    try:
+        log(f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} syncing shared library")
+        state = load_state()
+        cleanup_shared_junk(state)
 
-    n_export_marinara = export_marinara_to_shared(state)
-    n_export_lumiverse = export_lumiverse_to_shared(state)
-    n_export_st = sync_st_to_shared(state)
+        n_export_marinara = export_marinara_to_shared(state)
+        n_export_lumiverse = export_lumiverse_to_shared(state)
+        n_export_st = sync_st_to_shared(state)
 
-    if should_run_import():
-        rsync_shared()
-        n_chars_marinara = import_characters_to_marinara(state)
-        n_chars_lumiverse = import_characters_to_lumiverse(state)
-        n_chars_st = sync_shared_to_st(state)
-        n_worlds = import_lorebooks_to_marinara(state)
-    else:
-        n_chars_marinara = 0
-        n_chars_lumiverse = 0
-        n_chars_st = 0
-        n_worlds = 0
+        if should_run_import():
+            rsync_shared()
+            n_chars_marinara = import_characters_to_marinara(state)
+            n_chars_lumiverse = import_characters_to_lumiverse(state)
+            n_chars_st = sync_shared_to_st(state)
+            n_worlds = import_lorebooks_to_marinara(state)
+        else:
+            n_chars_marinara = 0
+            n_chars_lumiverse = 0
+            n_chars_st = 0
+            n_worlds = 0
 
-    save_state(state)
-    log(
-        "done — "
-        f"exported: marinara +{n_export_marinara}, lumiverse +{n_export_lumiverse}, st +{n_export_st}; "
-        f"imported: marinara +{n_chars_marinara}, lumiverse +{n_chars_lumiverse}, "
-        f"st +{n_chars_st}, lorebooks +{n_worlds}"
-    )
-    return 0
+        save_state(state)
+        log(
+            "done — "
+            f"exported: marinara +{n_export_marinara}, lumiverse +{n_export_lumiverse}, st +{n_export_st}; "
+            f"imported: marinara +{n_chars_marinara}, lumiverse +{n_chars_lumiverse}, "
+            f"st +{n_chars_st}, lorebooks +{n_worlds}"
+        )
+        return 0
+    except Exception as exc:
+        log(f"sync fatal error: {exc}")
+        return 1
 
 
 if __name__ == "__main__":
