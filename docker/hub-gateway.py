@@ -56,7 +56,13 @@ HOP_BY_HOP = {
     "upgrade",
 }
 
-SKIP_REQUEST_HEADERS = {"host", "connection", "content-length", "transfer-encoding"}
+SKIP_REQUEST_HEADERS = {
+    "host",
+    "connection",
+    "content-length",
+    "transfer-encoding",
+    "accept-encoding",
+}
 
 MAX_JS_REWRITE_BYTES = int(os.environ.get("MAX_JS_REWRITE_BYTES", "524288"))
 
@@ -125,13 +131,35 @@ def app_from_origin(origin: str) -> str | None:
 HUB_API_PREFIXES = ("/api/hub", "/api/active", "/api/ready", "/api/debug", "/api/sync")
 
 
-def decompress_body(data: bytes, encoding: str | None) -> bytes:
-    if encoding and "gzip" in encoding.lower():
+def decompress_body(data: bytes, encoding: str | None) -> tuple[bytes, bool]:
+    """Decompress backend body when possible. Returns (body, was_decompressed)."""
+    if not encoding:
+        return data, False
+
+    enc = encoding.lower()
+    if "gzip" in enc or enc == "x-gzip":
         try:
-            return gzip.decompress(data)
+            return gzip.decompress(data), True
         except OSError:
-            pass
-    return data
+            return data, False
+
+    if "br" in enc:
+        try:
+            import brotli  # type: ignore[import-not-found]
+
+            return brotli.decompress(data), True
+        except Exception:
+            return data, False
+
+    if "deflate" in enc:
+        try:
+            import zlib
+
+            return zlib.decompress(data), True
+        except Exception:
+            return data, False
+
+    return data, False
 
 
 def fix_base_href(text: str, prefix: str) -> str:
@@ -365,7 +393,7 @@ def resolve_route(path: str, referer: str, query: str = "", origin: str = "") ->
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
-    server_version = "hub-gateway/9"
+    server_version = "hub-gateway/10"
 
     def log_message(self, fmt: str, *args) -> None:
         print(f"[gateway] {self.address_string()} - {fmt % args}", flush=True)
@@ -511,6 +539,9 @@ class Handler(BaseHTTPRequestHandler):
         prior = self.headers.get("X-Forwarded-For", "")
         client_ip = self.client_address[0]
         headers["X-Forwarded-For"] = f"{prior}, {client_ip}" if prior else client_ip
+        # Never ask backends for br/gzip — we rewrite bodies as text and must not
+        # forward compressed bytes after stripping Content-Encoding.
+        headers["Accept-Encoding"] = "identity"
         return headers
 
     def _proxy_http(self, method: str) -> None:
@@ -536,14 +567,21 @@ class Handler(BaseHTTPRequestHandler):
             data = resp.read()
             content_type = resp.getheader("Content-Type", "")
             content_encoding = resp.getheader("Content-Encoding")
-            data = decompress_body(data, content_encoding)
+            data, decompressed = decompress_body(data, content_encoding)
             if prefix:
                 data = rewrite_app_body(data, content_type, prefix, app)
 
             self.send_response(resp.status)
             for key, value in resp.getheaders():
                 lower = key.lower()
-                if lower in HOP_BY_HOP or lower in {"content-length", "content-encoding"}:
+                if lower in HOP_BY_HOP or lower == "content-length":
+                    continue
+                if lower == "content-encoding":
+                    # Drop encoding only when we successfully decoded; otherwise keep
+                    # header + compressed bytes intact (avoids binary garbage in browser).
+                    if decompressed:
+                        continue
+                    self.send_header(key, value)
                     continue
                 if lower == "location" and prefix:
                     value = rewrite_location(value, prefix)
