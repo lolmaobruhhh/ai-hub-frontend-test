@@ -37,6 +37,7 @@ else
 fi
 
 /opt/hub/docker/patch-sillytavern-config.sh
+/opt/hub/docker/init-sillytavern-data.sh
 
 echo "[sillytavern] launching server.js" >&2
 exec node server.js \
