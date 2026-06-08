@@ -67,7 +67,12 @@ async function main() {
     process.exit(1);
   }
 
-  const files = walk(ROOT).filter((f) => !f.startsWith("data/") || f.includes("shared"));
+  const files = walk(ROOT).filter(
+    (f) =>
+      (!f.startsWith("data/") || f.includes("shared")) &&
+      !f.includes("__pycache__") &&
+      !f.endsWith(".pyc"),
+  );
   console.log(`Uploading ${files.length} files...`);
 
   for (const file of files.sort()) {
