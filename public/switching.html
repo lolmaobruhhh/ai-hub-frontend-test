@@ -23,12 +23,23 @@
 <body>
   <div>
     <p id="status">Switching frontend…</p>
-    <p class="muted" id="hint">Switching is usually instant — first boot may take longer.</p>
+    <p class="muted" id="hint">Clearing cached app shell, then loading the active frontend…</p>
   </div>
   <script>
     const status = document.getElementById('status');
     const hint = document.getElementById('hint');
     let tries = 0;
+
+    async function clearCachedAppShell() {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.unregister()));
+      }
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+    }
 
     async function poll() {
       tries += 1;
@@ -39,9 +50,11 @@
         status.textContent = `Starting ${app}… (${tries * 2}s)`;
 
         if (readyData.ready) {
-          const page = await fetch('/', { method: 'GET', cache: 'no-store' });
+          await clearCachedAppShell();
+          const bust = `_hub=${Date.now()}`;
+          const page = await fetch(`/?${bust}`, { method: 'GET', cache: 'no-store' });
           if (page.ok) {
-            window.location.replace('/');
+            window.location.replace(`/?${bust}`);
             return;
           }
         }
@@ -50,13 +63,13 @@
       }
 
       if (tries > 180) {
-        hint.textContent = 'Still starting. Check Space Logs, then refresh /.';
+        hint.textContent = 'Still starting. Open /api/hub to pick a frontend, or refresh /.';
         return;
       }
       setTimeout(poll, 2000);
     }
 
-    poll();
+    clearCachedAppShell().finally(poll);
   </script>
 </body>
 </html>
