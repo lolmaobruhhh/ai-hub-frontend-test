@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Switch nginx routing — all three backends stay running (needs ~16GB RAM).
+# Switch active frontend — all three backends stay running (needs ~16GB RAM).
+# Routing is dynamic: hub-gateway reads /data/.active_app per request (no nginx reload).
 set -uo pipefail
 
 APP="${1:-}"
@@ -57,26 +58,15 @@ if ! port_up "${PORT}"; then
   exit 1
 fi
 
+# Legacy upstream.conf for diagnostics / optional nginx fallback.
 cat > /opt/hub/docker/upstream.conf <<EOF
 upstream active_backend {
     server 127.0.0.1:${PORT};
 }
 EOF
 
-for attempt in 1 2 3; do
-  if nginx -s reload -c /opt/hub/docker/nginx.conf 2>/dev/null; then
-    echo "[hub] nginx reloaded → ${APP} on :${PORT}" >&2
-    break
-  fi
-  if [[ "${attempt}" -eq 3 ]]; then
-    echo "[hub] nginx reload skipped (not running yet)" >&2
-  else
-    sleep 1
-  fi
-done
-
 if [[ "${HUB_SKIP_SYNC:-}" != "1" ]]; then
   /opt/hub/scripts/sync-shared-data.sh 2>&1 || echo "[hub] warn: sync-shared-data" >&2
 fi
 
-echo "[hub] switched to ${APP} on internal port ${PORT}" >&2
+echo "[hub] switched to ${APP} on internal port ${PORT} (dynamic gateway)" >&2
