@@ -70,5 +70,5 @@ p3=$!
 wait "${p1}" "${p2}" "${p3}" 2>/dev/null || true
 
 wait_for sillytavern "${ST_PORT:-8000}" 300 || true
-wait_for lumiverse   "${LUMIVERSE_PORT:-7861}" 120 || true
-wait_for marinara    "${MARINARA_PORT:-7862}" 120 || true
+wait_for lumiverse   "${LUMIVERSE_PORT:-7861}" 90 || true
+wait_for marinara    "${MARINARA_PORT:-7862}" 60 || true
