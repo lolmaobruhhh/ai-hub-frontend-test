@@ -29,6 +29,8 @@
     const status = document.getElementById('status');
     const hint = document.getElementById('hint');
     let tries = 0;
+    const parts = location.pathname.split('/').filter(Boolean);
+    const targetApp = (parts[parts.length - 1] || '').toLowerCase();
 
     async function clearCachedAppShell() {
       if ('serviceWorker' in navigator) {
@@ -46,10 +48,12 @@
       try {
         const readyRes = await fetch('/api/ready', { cache: 'no-store' });
         const readyData = await readyRes.json();
-        const app = readyData.active || 'frontend';
-        status.textContent = `Starting ${app}… (${tries * 2}s)`;
+        const active = (readyData.active || '').toLowerCase();
+        const label = targetApp || active || 'frontend';
+        status.textContent = `Starting ${label}… (${tries * 2}s)`;
 
-        if (readyData.ready) {
+        const activeOk = !targetApp || active === targetApp;
+        if (readyData.ready && activeOk) {
           await clearCachedAppShell();
           const bust = `_hub=${Date.now()}`;
           const page = await fetch(`/?${bust}`, { method: 'GET', cache: 'no-store' });
@@ -57,6 +61,8 @@
             window.location.replace(`/?${bust}`);
             return;
           }
+        } else if (readyData.ready && targetApp && active !== targetApp) {
+          status.textContent = `Waiting for switch to ${targetApp} (active: ${active || 'unknown'})…`;
         }
       } catch (_) {
         status.textContent = `Waiting for backend… (${tries * 2}s)`;
