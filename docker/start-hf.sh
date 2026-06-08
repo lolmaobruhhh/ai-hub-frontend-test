@@ -7,6 +7,13 @@ DATA_ROOT="${DATA_ROOT:-/data}"
 export DATA_ROOT
 export PATH="/usr/local/bin:/usr/bin:/bin:${PATH:-}"
 
+if [[ -z "${PUBLIC_ORIGIN:-}" ]]; then
+  resolved="$(bash /opt/hub/docker/resolve-public-origin.sh 2>/dev/null || true)"
+  if [[ -n "${resolved}" ]]; then
+    export PUBLIC_ORIGIN="${resolved}"
+  fi
+fi
+
 mkdir -p "${DATA_ROOT}" "${DATA_ROOT}/.pids" \
   /tmp/nginx/body /tmp/nginx/proxy /tmp/nginx/fastcgi /tmp/nginx/uwsgi /tmp/nginx/scgi 2>/dev/null || true
 chmod -R u+rwX "${DATA_ROOT}" /tmp/nginx 2>/dev/null || true
