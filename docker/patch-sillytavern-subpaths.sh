@@ -5,9 +5,22 @@ set -euo pipefail
 
 ST_ROOT="/apps/sillytavern"
 PREFIX="/apps/sillytavern"
+MARKER="${ST_ROOT}/.hub-subpath-patched"
+LOCK="${ST_ROOT}/.hub-subpath-patch.lock"
 
 if [[ ! -d "${ST_ROOT}" ]]; then
   echo "[hub] skip sillytavern subpath patch — missing ${ST_ROOT}" >&2
+  exit 0
+fi
+
+if [[ -f "${MARKER}" ]]; then
+  echo "[hub] sillytavern subpath patch already applied — skip" >&2
+  exit 0
+fi
+
+exec 9>"${LOCK}"
+if ! flock -n 9; then
+  echo "[hub] sillytavern subpath patch already running — skip" >&2
   exit 0
 fi
 
@@ -42,6 +55,7 @@ SKIP_DIRS = {
 # Never patch the Node server — only static assets the browser loads.
 SKIP_FILES = {
     "server.js",
+    "lib.js",
     "webpack.config.js",
     "postcss.config.js",
     "babel.config.js",
@@ -137,3 +151,5 @@ for path in root.rglob("*"):
 
 print(f"[hub] sillytavern subpath patch prefix={prefix}/ files_changed={changed}", flush=True)
 PY
+
+touch "${MARKER}"
