@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
+# Point nginx at the chosen frontend. All three backends stay running.
 set -uo pipefail
 
 APP="${1:-}"
 DATA_ROOT="${DATA_ROOT:-/data}"
-PID_DIR="${DATA_ROOT}/.pids"
-LOG_DIR="${DATA_ROOT}/.logs"
-mkdir -p "${PID_DIR}" "${LOG_DIR}"
 
 if [[ -z "${APP}" ]]; then
   echo "usage: switch-app.sh <sillytavern|lumiverse|marinara>" >&2
@@ -25,99 +23,21 @@ port_for() {
   esac
 }
 
-wait_for() {
-  local name="$1"
-  local port="$2"
-  local max="$3"
-  echo "[hub] waiting for ${name} on :${port} (up to ${max}s)..." >&2
-  for i in $(seq 1 "${max}"); do
-    if (echo >/dev/tcp/127.0.0.1/"${port}") >/dev/null 2>&1; then
-      echo "[hub] ${name} ready on :${port} (after ${i}s)" >&2
-      return 0
-    fi
-    if (( i % 15 == 0 )); then
-      echo "[hub] still waiting for ${name} :${port} (${i}s)..." >&2
-    fi
-    sleep 1
-  done
-  echo "[hub] ERROR: ${name} never opened :${port} after ${max}s" >&2
-  return 1
-}
-
-stop_one() {
-  local name="$1"
-  local pidfile="${PID_DIR}/${name}.pid"
-  local logpidfile="${PID_DIR}/${name}-log.pid"
-
-  if [[ -f "${logpidfile}" ]]; then
-    kill "$(cat "${logpidfile}")" 2>/dev/null || true
-    rm -f "${logpidfile}"
-  fi
-
-  if [[ -f "${pidfile}" ]]; then
-    local pid
-    pid="$(cat "${pidfile}")"
-    kill -- -"${pid}" 2>/dev/null || kill "${pid}" 2>/dev/null || true
-    rm -f "${pidfile}"
-  fi
-
-  case "${name}" in
-    sillytavern)
-      pkill -f "node server.js" 2>/dev/null || true
-      ;;
-    lumiverse)
-      pkill -f "bun run src/index.ts" 2>/dev/null || true
-      ;;
-    marinara)
-      pkill -f "packages/server/dist/index.js" 2>/dev/null || true
-      ;;
-  esac
-}
-
-start_one() {
-  local name="$1"
-  local script="/opt/hub/docker/run-${name}.sh"
-  local log="${LOG_DIR}/${name}.log"
-
-  : > "${log}"
-  setsid bash -c "exec bash \"${script}\"" >> "${log}" 2>&1 &
-  echo $! > "${PID_DIR}/${name}.pid"
-
-  tail -n 0 -f "${log}" 2>/dev/null | sed -u "s/^/[${name}] /" >&2 &
-  echo $! > "${PID_DIR}/${name}-log.pid"
-
-  echo "[hub] started ${name} pid $(cat "${PID_DIR}/${name}.pid")" >&2
-}
-
 PREV_APP=""
 if [[ -f "${DATA_ROOT}/.active_app" ]]; then
   PREV_APP="$(cat "${DATA_ROOT}/.active_app")"
 fi
 
-# Export characters from the app we're leaving while it is still running.
-if [[ -n "${PREV_APP}" ]]; then
+# Export from the previously active app before changing routes.
+if [[ -n "${PREV_APP}" && "${PREV_APP}" != "${APP}" ]]; then
   HUB_SYNC_EXPORT="${PREV_APP}" python3 /opt/hub/scripts/hub-sync-import.py 2>&1 || true
 fi
 
 echo "${APP}" > "${DATA_ROOT}/.active_app"
 
-stop_one sillytavern
-stop_one lumiverse
-stop_one marinara
-sleep 1
-
-start_one "${APP}"
+/opt/hub/docker/start-all-apps.sh 2>&1 || true
 
 PORT="$(port_for "${APP}")"
-WAIT_MAX=120
-case "${APP}" in
-  sillytavern) WAIT_MAX=300 ;;
-esac
-
-if ! wait_for "${APP}" "${PORT}" "${WAIT_MAX}"; then
-  echo "[hub] switch to ${APP} failed — backend did not start" >&2
-  exit 1
-fi
 
 cat > /opt/hub/docker/upstream.conf <<EOF
 upstream active_backend {
@@ -131,7 +51,6 @@ else
   echo "[hub] nginx reload skipped (not running yet)" >&2
 fi
 
-# Pull new SillyTavern cards into Marinara/Lumiverse staging when switching apps.
 /opt/hub/scripts/sync-shared-data.sh 2>&1 || echo "[hub] warn: sync-shared-data" >&2
 
 echo "[hub] switched to ${APP} on internal port ${PORT}" >&2
