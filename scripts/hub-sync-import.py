@@ -2,12 +2,9 @@
 """
 Bidirectional hub sync via /data/shared (standard Tavern PNG/JSON cards).
 
-Flow:
-  1. Export running backends (Marinara, Lumiverse) → /data/shared/characters
-  2. Mirror shared → per-app import-staging folders
-  3. Import shared → Marinara + Lumiverse when those backends are up
-
-SillyTavern symlinks characters/worlds directly to shared — no import step.
+Canonical files: hub_{source}_{slug}.png  (one per character name per source app)
+- Never re-import hub_marinara_* into Marinara or hub_lumiverse_* into Lumiverse
+- SillyTavern uses its own characters/ folder; sync copies hub_* cards in/out
 """
 from __future__ import annotations
 
@@ -15,6 +12,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import sys
 import time
 import urllib.error
@@ -25,6 +23,7 @@ from uuid import uuid4
 
 DATA_ROOT = Path(os.environ.get("DATA_ROOT", "/data"))
 SHARED = DATA_ROOT / "shared"
+ST_CHARS = DATA_ROOT / "sillytavern" / "data" / "default-user" / "characters"
 STAGING_MARINARA = DATA_ROOT / "marinara" / "storage" / "import-staging"
 STAGING_LUMIVERSE = DATA_ROOT / "lumiverse" / "import-staging"
 STATE_DIR = DATA_ROOT / ".hub-sync"
@@ -34,8 +33,9 @@ LUMIVERSE_PORT = int(os.environ.get("LUMIVERSE_PORT", "7861"))
 ST_ROOT = DATA_ROOT / "sillytavern"
 MARINARA_BUILTIN_IDS = {"__professor_mari__"}
 EXPORT_ONLY = os.environ.get("HUB_SYNC_EXPORT", "").strip().lower()
-OWNER_USERNAME = os.environ.get("OWNER_USERNAME", "admin")
 OWNER_PASSWORD = os.environ.get("OWNER_PASSWORD") or os.environ.get("HUB_SYNC_PASSWORD", "")
+HUB_PREFIX_RE = re.compile(r"^hub_(st|marinara|lumiverse)_", re.I)
+LEGACY_HUB_RE = re.compile(r"^hub_(st|marinara|lumiverse)_[A-Za-z0-9]{6,8}_", re.I)
 
 
 def log(msg: str) -> None:
@@ -72,9 +72,31 @@ def safe_name(value: str, fallback: str = "character") -> str:
     return cleaned or fallback
 
 
-def shared_filename(source: str, char_id: str, name: str) -> str:
-    short_id = re.sub(r"[^a-zA-Z0-9]", "", char_id)[:8] or "id"
-    return f"hub_{source}_{short_id}_{safe_name(name)}.png"
+def name_slug(name: str) -> str:
+    slug = safe_name(name).lower()
+    slug = re.sub(r"[^a-z0-9]+", "_", slug).strip("_")
+    return slug[:60] or "character"
+
+
+def canonical_filename(source: str, name: str) -> str:
+    return f"hub_{source}_{name_slug(name)}.png"
+
+
+def canonical_key(source: str, name: str) -> str:
+    return f"canonical:{source}:{name_slug(name)}"
+
+
+def lumiverse_owner_username() -> str:
+    cred_path = DATA_ROOT / "lumiverse" / "owner.credentials"
+    if cred_path.is_file():
+        try:
+            data = json.loads(cred_path.read_text(encoding="utf-8"))
+            username = data.get("username")
+            if isinstance(username, str) and username.strip():
+                return username.strip()
+        except Exception:
+            pass
+    return os.environ.get("OWNER_USERNAME", "admin").strip() or "admin"
 
 
 def rsync_shared() -> None:
@@ -212,23 +234,119 @@ def multipart_batch(
 
 def lumiverse_opener() -> urllib.request.OpenerDirector | None:
     if not OWNER_PASSWORD:
-        log("lumiverse auto-import skipped — set OWNER_PASSWORD in HF Secrets")
+        log("lumiverse sync skipped — set OWNER_PASSWORD (your Lumiverse login password) in HF Secrets")
         return None
 
+    username = lumiverse_owner_username()
     jar = CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
     base = f"http://127.0.0.1:{LUMIVERSE_PORT}"
     status, payload = http_json(
         "POST",
         f"{base}/api/auth/sign-in/username",
-        {"username": OWNER_USERNAME, "password": OWNER_PASSWORD},
+        {"username": username, "password": OWNER_PASSWORD},
         headers={"Origin": base},
         opener=opener,
     )
     if status >= 400:
-        log(f"lumiverse sign-in failed ({status}): {payload}")
+        log(f"lumiverse sign-in failed for user '{username}' ({status}): {payload}")
         return None
     return opener
+
+
+def marinara_character_names() -> set[str]:
+    if not backend_up(MARINARA_PORT):
+        return set()
+    status, payload = http_json("GET", f"http://127.0.0.1:{MARINARA_PORT}/api/characters/")
+    if status >= 400 or not isinstance(payload, list):
+        return set()
+    names: set[str] = set()
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        data = item.get("data")
+        name = None
+        if isinstance(data, str):
+            try:
+                parsed = json.loads(data)
+                if isinstance(parsed, dict):
+                    name = parsed.get("name")
+            except json.JSONDecodeError:
+                pass
+        elif isinstance(data, dict):
+            name = data.get("name")
+        if name:
+            names.add(str(name).strip().lower())
+    return names
+
+
+def char_name_from_path(path: Path) -> str:
+    stem = path.stem
+    if HUB_PREFIX_RE.match(path.name):
+        parts = stem.split("_", 2)
+        if len(parts) >= 3:
+            return parts[2].replace("_", " ")
+    return stem
+
+
+def cleanup_legacy_hub_files(state: dict) -> int:
+    char_dir = SHARED / "characters"
+    if not char_dir.is_dir():
+        return 0
+    removed = 0
+    canonical_paths = {
+        entry.get("file")
+        for entry in state.get("exports", {}).values()
+        if isinstance(entry, dict) and entry.get("file")
+    }
+    for path in list(char_dir.glob("hub_*.png")):
+        if LEGACY_HUB_RE.match(path.name) and f"characters/{path.name}" not in canonical_paths:
+            try:
+                path.unlink()
+                state["characters"].pop(f"characters/{path.name}", None)
+                removed += 1
+                log(f"removed legacy duplicate: characters/{path.name}")
+            except OSError as exc:
+                log(f"cleanup failed for {path.name}: {exc}")
+    return removed
+
+
+def write_canonical_export(
+    state: dict,
+    source: str,
+    name: str,
+    png_bytes: bytes,
+    updated: str,
+    source_id: str,
+) -> bool:
+    char_dir = SHARED / "characters"
+    char_dir.mkdir(parents=True, exist_ok=True)
+    filename = canonical_filename(source, name)
+    rel = f"characters/{filename}"
+    dest = SHARED / rel
+    ckey = canonical_key(source, name)
+
+    prev = state["exports"].get(ckey, {})
+    old_rel = prev.get("file")
+    if old_rel and old_rel != rel:
+        old_path = SHARED / old_rel
+        if old_path.is_file():
+            try:
+                old_path.unlink()
+                state["characters"].pop(old_rel, None)
+            except OSError:
+                pass
+
+    dest.write_bytes(png_bytes)
+    state["exports"][ckey] = {
+        "file": rel,
+        "filename": filename,
+        "updated": updated,
+        "name": name,
+        "source_id": source_id,
+    }
+    state["characters"][rel] = file_sig(dest)
+    return True
 
 
 def export_marinara_to_shared(state: dict) -> int:
@@ -242,10 +360,7 @@ def export_marinara_to_shared(state: dict) -> int:
         log(f"marinara list failed ({status}): {payload}")
         return 0
 
-    out_dir = SHARED / "characters"
-    out_dir.mkdir(parents=True, exist_ok=True)
     exported = 0
-
     for item in payload:
         if not isinstance(item, dict):
             continue
@@ -254,13 +369,6 @@ def export_marinara_to_shared(state: dict) -> int:
             continue
 
         updated = str(item.get("updatedAt") or item.get("updated_at") or "")
-        export_key = f"marinara:{char_id}"
-        prev = state["exports"].get(export_key, {})
-        if prev.get("updated") == updated and prev.get("file"):
-            shared_rel = prev["file"]
-            if (SHARED / shared_rel).is_file():
-                continue
-
         name = "character"
         data = item.get("data")
         if isinstance(data, str):
@@ -273,25 +381,22 @@ def export_marinara_to_shared(state: dict) -> int:
         elif isinstance(data, dict):
             name = str(data.get("name") or name)
 
-        filename = prev.get("filename") or shared_filename("marinara", char_id, name)
-        rel = f"characters/{filename}"
-        dest = SHARED / rel
+        ckey = canonical_key("marinara", name)
+        prev = state["exports"].get(ckey, {})
+        if prev.get("updated") == updated and prev.get("file"):
+            if (SHARED / prev["file"]).is_file():
+                continue
 
-        png_status, png_bytes = http_bytes(f"http://127.0.0.1:{MARINARA_PORT}/api/characters/{char_id}/export-png")
+        png_status, png_bytes = http_bytes(
+            f"http://127.0.0.1:{MARINARA_PORT}/api/characters/{char_id}/export-png"
+        )
         if png_status >= 400 or not png_bytes:
             log(f"marinara export failed for {char_id} ({png_status})")
             continue
 
-        dest.write_bytes(png_bytes)
-        state["exports"][export_key] = {
-            "file": rel,
-            "filename": filename,
-            "updated": updated,
-            "name": name,
-        }
-        state["characters"][rel] = file_sig(dest)
-        exported += 1
-        log(f"exported character → shared: {rel}")
+        if write_canonical_export(state, "marinara", name, png_bytes, updated, char_id):
+            exported += 1
+            log(f"exported character → shared: {state['exports'][ckey]['file']}")
 
     return exported
 
@@ -316,10 +421,7 @@ def export_lumiverse_to_shared(state: dict) -> int:
     if not isinstance(chars, list):
         return 0
 
-    out_dir = SHARED / "characters"
-    out_dir.mkdir(parents=True, exist_ok=True)
     exported = 0
-
     for item in chars:
         if not isinstance(item, dict):
             continue
@@ -328,17 +430,12 @@ def export_lumiverse_to_shared(state: dict) -> int:
             continue
 
         updated = str(item.get("updated_at") or "")
-        export_key = f"lumiverse:{char_id}"
-        prev = state["exports"].get(export_key, {})
-        if prev.get("updated") == updated and prev.get("file"):
-            shared_rel = prev["file"]
-            if (SHARED / shared_rel).is_file():
-                continue
-
         name = str(item.get("name") or "character")
-        filename = prev.get("filename") or shared_filename("lumiverse", char_id, name)
-        rel = f"characters/{filename}"
-        dest = SHARED / rel
+        ckey = canonical_key("lumiverse", name)
+        prev = state["exports"].get(ckey, {})
+        if prev.get("updated") == updated and prev.get("file"):
+            if (SHARED / prev["file"]).is_file():
+                continue
 
         png_status, png_bytes = http_bytes(
             f"{base}/api/v1/characters/{char_id}/export?format=png",
@@ -348,18 +445,95 @@ def export_lumiverse_to_shared(state: dict) -> int:
             log(f"lumiverse export failed for {char_id} ({png_status})")
             continue
 
-        dest.write_bytes(png_bytes)
-        state["exports"][export_key] = {
-            "file": rel,
-            "filename": filename,
-            "updated": updated,
-            "name": name,
-        }
-        state["characters"][rel] = file_sig(dest)
-        exported += 1
-        log(f"exported character → shared: {rel}")
+        if write_canonical_export(state, "lumiverse", name, png_bytes, updated, char_id):
+            exported += 1
+            log(f"exported character → shared: {state['exports'][ckey]['file']}")
 
     return exported
+
+
+def sync_st_to_shared(state: dict) -> int:
+    if not ST_CHARS.is_dir():
+        return 0
+    copied = 0
+    char_dir = SHARED / "characters"
+    char_dir.mkdir(parents=True, exist_ok=True)
+
+    for path in sorted(ST_CHARS.iterdir()):
+        if not path.is_file():
+            continue
+        ext = path.suffix.lower()
+        if ext not in {".png", ".json"}:
+            continue
+        if path.name.startswith("hub_"):
+            continue
+
+        name = char_name_from_path(path)
+        if ext == ".png":
+            dest_name = canonical_filename("st", name)
+        else:
+            dest_name = path.name
+
+        rel = f"characters/{dest_name}"
+        sig = file_sig(path)
+        st_key = f"st_src:{path.name}"
+        if state["characters"].get(st_key) == sig and (SHARED / rel).is_file():
+            continue
+
+        try:
+            shutil.copy2(path, SHARED / rel)
+            state["characters"][st_key] = sig
+            state["characters"][rel] = file_sig(SHARED / rel)
+            state["exports"][canonical_key("st", name)] = {
+                "file": rel,
+                "filename": dest_name,
+                "updated": sig,
+                "name": name,
+                "source_id": path.name,
+            }
+            copied += 1
+            log(f"exported ST character → shared: {rel}")
+        except OSError as exc:
+            log(f"ST export failed for {path.name}: {exc}")
+
+    return copied
+
+
+def sync_shared_to_st(state: dict) -> int:
+    char_dir = SHARED / "characters"
+    if not char_dir.is_dir():
+        return 0
+    ST_CHARS.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    existing = {p.name.lower() for p in ST_CHARS.iterdir() if p.is_file()}
+
+    for path in sorted(char_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() != ".png":
+            continue
+        if not HUB_PREFIX_RE.match(path.name):
+            continue
+        if path.name.lower().startswith("hub_st_"):
+            continue
+
+        name = char_name_from_path(path)
+        target_name = f"{safe_name(name)}.png"
+        if target_name.lower() in existing:
+            st_key = f"st_dst:{target_name}"
+            sig = file_sig(path)
+            if state["characters"].get(st_key) == sig:
+                continue
+
+        target = ST_CHARS / target_name
+        try:
+            shutil.copy2(path, target)
+            state["characters"][f"st_dst:{target_name}"] = file_sig(path)
+            existing.add(target_name.lower())
+            copied += 1
+            log(f"imported character → sillytavern: {target_name}")
+        except OSError as exc:
+            log(f"ST import failed for {path.name}: {exc}")
+
+    return copied
 
 
 def import_characters_to_marinara(state: dict) -> int:
@@ -367,20 +541,32 @@ def import_characters_to_marinara(state: dict) -> int:
     if not char_dir.is_dir():
         return 0
     if not backend_up(MARINARA_PORT):
-        log("marinara not running — skip auto-import (switch to Marinara first)")
+        log("marinara not running — skip marinara import")
         return 0
 
+    existing_names = marinara_character_names()
     pending: list[tuple[str, Path]] = []
+
     for path in sorted(char_dir.iterdir()):
         if not path.is_file():
             continue
         ext = path.suffix.lower()
         if ext not in {".png", ".json", ".charx"}:
             continue
+        if path.name.lower().startswith("hub_marinara_"):
+            continue
+
         rel = str(path.relative_to(SHARED))
         sig = file_sig(path)
         if state["characters"].get(rel) == sig:
             continue
+
+        card_name = char_name_from_path(path).strip().lower()
+        if card_name and card_name in existing_names:
+            state["characters"][rel] = sig
+            log(f"marinara skip duplicate name: {path.name}")
+            continue
+
         pending.append((rel, path))
 
     if not pending:
@@ -444,6 +630,9 @@ def import_characters_to_lumiverse(state: dict) -> int:
         ext = path.suffix.lower()
         if ext not in {".png", ".json", ".charx"}:
             continue
+        if path.name.lower().startswith("hub_lumiverse_"):
+            continue
+
         rel = str(path.relative_to(SHARED))
         sig = file_sig(path)
         if state["characters"].get(rel) == sig:
@@ -462,7 +651,9 @@ def import_characters_to_lumiverse(state: dict) -> int:
         if not batch:
             return
         url = f"http://127.0.0.1:{LUMIVERSE_PORT}/api/v1/characters/import-bulk"
-        status, payload = multipart_batch(url, batch, opener=opener, fields={"skip_duplicates": "true"})
+        status, payload = multipart_batch(
+            url, batch, opener=opener, fields={"skip_duplicates": "true"}
+        )
         if status >= 400:
             log(f"lumiverse character batch import failed ({status}): {payload}")
             batch = []
@@ -470,13 +661,13 @@ def import_characters_to_lumiverse(state: dict) -> int:
             return
         results = payload.get("results", []) if isinstance(payload, dict) else []
         for rel, result in zip(batch_meta, results):
-            if result.get("success") and not result.get("skipped"):
+            if result.get("success"):
                 state["characters"][rel] = file_sig(SHARED / rel)
-                imported += 1
-                log(f"imported character → lumiverse: {rel}")
-            elif result.get("skipped"):
-                state["characters"][rel] = file_sig(SHARED / rel)
-                log(f"lumiverse skipped duplicate: {rel}")
+                if not result.get("skipped"):
+                    imported += 1
+                    log(f"imported character → lumiverse: {rel}")
+                else:
+                    log(f"lumiverse skipped duplicate: {rel}")
             else:
                 log(f"lumiverse import failed for {rel}: {result.get('error', 'unknown')}")
         batch = []
@@ -526,99 +717,33 @@ def import_lorebooks_to_marinara(state: dict) -> int:
     return imported
 
 
-def bulk_import_from_sillytavern_tree(state: dict) -> int:
-    """Fallback: Marinara ST bulk scan expects data/default-user/ layout under ST root."""
-    if not ST_ROOT.is_dir() or not backend_up(MARINARA_PORT):
-        return 0
-    url = f"http://127.0.0.1:{MARINARA_PORT}/api/import/st-bulk/scan"
-    status, scan = http_json("POST", url, {"folderPath": str(ST_ROOT)})
-    if status >= 400 or not isinstance(scan, dict) or not scan.get("success"):
-        return 0
-    chars = scan.get("characters") or []
-    if not chars:
-        return 0
-    new_ids = []
-    for item in chars:
-        rel = item.get("path", "")
-        try:
-            p = Path(rel)
-            if not p.is_file():
-                continue
-            key = f"st:{p.name}"
-            sig = file_sig(p)
-            if state["characters"].get(key) == sig:
-                continue
-            new_ids.append(item.get("id"))
-        except OSError:
-            continue
-    if not new_ids:
-        return 0
-    run_url = f"http://127.0.0.1:{MARINARA_PORT}/api/import/st-bulk/run"
-    body = {
-        "folderPath": str(ST_ROOT),
-        "options": {
-            "characters": new_ids,
-            "chats": False,
-            "groupChats": False,
-            "presets": False,
-            "lorebooks": False,
-            "backgrounds": False,
-            "personas": False,
-        },
-    }
-    data = json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(
-        run_url,
-        data=data,
-        headers={"Content-Type": "application/json", "Accept": "text/event-stream"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=300) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as exc:
-        log(f"marinara bulk run failed ({exc.code})")
-        return 0
-    imported = 0
-    for line in raw.splitlines():
-        if not line.startswith("data:"):
-            continue
-        try:
-            event = json.loads(line[5:].strip())
-        except json.JSONDecodeError:
-            continue
-        if "imported" in event and isinstance(event["imported"], dict):
-            imported = int(event["imported"].get("characters") or 0)
-    if imported:
-        log(f"marinara bulk imported {imported} character(s) from sillytavern tree")
-    return imported
-
-
 def main() -> int:
     log(f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} syncing shared library")
     state = load_state()
+    cleanup_legacy_hub_files(state)
 
     n_export_marinara = export_marinara_to_shared(state)
     n_export_lumiverse = export_lumiverse_to_shared(state)
+    n_export_st = sync_st_to_shared(state)
 
     if should_run_import():
         rsync_shared()
         n_chars_marinara = import_characters_to_marinara(state)
         n_chars_lumiverse = import_characters_to_lumiverse(state)
+        n_chars_st = sync_shared_to_st(state)
         n_worlds = import_lorebooks_to_marinara(state)
-        if n_chars_marinara == 0:
-            n_chars_marinara = bulk_import_from_sillytavern_tree(state)
     else:
         n_chars_marinara = 0
         n_chars_lumiverse = 0
+        n_chars_st = 0
         n_worlds = 0
 
     save_state(state)
     log(
         "done — "
-        f"exported: marinara +{n_export_marinara}, lumiverse +{n_export_lumiverse}; "
+        f"exported: marinara +{n_export_marinara}, lumiverse +{n_export_lumiverse}, st +{n_export_st}; "
         f"imported: marinara +{n_chars_marinara}, lumiverse +{n_chars_lumiverse}, "
-        f"lorebooks +{n_worlds}"
+        f"st +{n_chars_st}, lorebooks +{n_worlds}"
     )
     return 0
 
