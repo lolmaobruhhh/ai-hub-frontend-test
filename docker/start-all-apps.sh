@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Start all three frontends if not already listening (always-on mode).
+# Launch in parallel — SillyTavern init can take minutes; don't block the others.
 set -uo pipefail
 
 DATA_ROOT="${DATA_ROOT:-/data}"
@@ -27,10 +28,9 @@ wait_for() {
   return 1
 }
 
-start_one() {
+launch_one() {
   local name="$1"
   local port="$2"
-  local wait_max="$3"
   local script="/opt/hub/docker/run-${name}.sh"
   local log="${LOG_DIR}/${name}.log"
   local pidfile="${PID_DIR}/${name}.pid"
@@ -58,9 +58,17 @@ start_one() {
   echo $! > "${logpidfile}"
 
   echo "[hub] started ${name} pid $(cat "${pidfile}")" >&2
-  wait_for "${name}" "${port}" "${wait_max}" || true
 }
 
-start_one sillytavern "${ST_PORT:-8000}" 300
-start_one lumiverse   "${LUMIVERSE_PORT:-7861}" 120
-start_one marinara    "${MARINARA_PORT:-7862}" 120
+# Launch all three at once, then wait for each port.
+launch_one sillytavern "${ST_PORT:-8000}" &
+p1=$!
+launch_one lumiverse   "${LUMIVERSE_PORT:-7861}" &
+p2=$!
+launch_one marinara    "${MARINARA_PORT:-7862}" &
+p3=$!
+wait "${p1}" "${p2}" "${p3}" 2>/dev/null || true
+
+wait_for sillytavern "${ST_PORT:-8000}" 300 || true
+wait_for lumiverse   "${LUMIVERSE_PORT:-7861}" 120 || true
+wait_for marinara    "${MARINARA_PORT:-7862}" 120 || true
