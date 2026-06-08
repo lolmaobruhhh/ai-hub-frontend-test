@@ -7,6 +7,8 @@ import os
 import socket
 import subprocess
 import threading
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -38,9 +40,21 @@ def backend_ready(app: str | None = None) -> bool:
         return False
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=1):
-            return True
+            pass
     except OSError:
         return False
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/",
+            headers={"Accept": "text/html,application/json", "User-Agent": "hub-ready-probe"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            return 200 <= resp.status < 500
+    except urllib.error.HTTPError as exc:
+        return exc.code < 500
+    except Exception:
+        return True
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -132,9 +146,12 @@ class Handler(BaseHTTPRequestHandler):
                     timeout=600,
                     check=False,
                 )
+                out = (proc.stdout or proc.stderr or "").strip().splitlines()
+                tail = out[-5:] if out else []
                 if proc.returncode != 0:
-                    tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-3:]
                     print(f"[hub-api] switch to {app} exit {proc.returncode}: {tail}", flush=True)
+                else:
+                    print(f"[hub-api] switch to {app} ok — active={active_app()}: {tail}", flush=True)
             except Exception as exc:
                 print(f"[hub-api] switch to {app} failed: {exc}", flush=True)
             self._html("switching.html")
