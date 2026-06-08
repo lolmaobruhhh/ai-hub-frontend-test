@@ -32,24 +32,6 @@ if [[ -f "${DATA_ROOT}/.active_app" ]]; then
 fi
 echo "${ACTIVE}" > "${DATA_ROOT}/.active_app"
 
-HUB_API_PORT="${HUB_API_PORT:-7870}"
-export HUB_API_PORT
-
-echo "[hub] starting hub-api on :${HUB_API_PORT}" >&2
-python3 /opt/hub/docker/hub-api.py >&2 &
-
-hub_api_up() {
-  (echo >/dev/tcp/127.0.0.1/"${HUB_API_PORT}") >/dev/null 2>&1
-}
-
-for i in $(seq 1 15); do
-  if hub_api_up; then
-    echo "[hub] hub-api ready on :${HUB_API_PORT}" >&2
-    break
-  fi
-  sleep 1
-done
-
 echo "[hub] starting all frontends (always-on)" >&2
 /opt/hub/docker/start-all-apps.sh 2>&1 || echo "[hub] warn: start-all-apps" >&2
 
@@ -92,6 +74,6 @@ fi
 
 (while true; do sleep 300; /opt/hub/scripts/sync-shared-data.sh || true; done) >&2 &
 
-echo "[hub] nginx on :${HUB_PORT:-7860}" >&2
+echo "[hub] gateway on :${HUB_PORT:-7860} (dynamic routing — no nginx reload)" >&2
 ( sleep 8; /opt/hub/scripts/sync-shared-data.sh 2>&1 || echo "[hub] warn: post-boot sync" >&2 ) >&2 &
-exec nginx -c /opt/hub/docker/nginx.conf -g 'daemon off;'
+exec python3 /opt/hub/docker/hub-gateway.py
