@@ -3,6 +3,10 @@
 # Repo: https://github.com/Sexlovr/ai-hub-frontend
 # =============================================================================
 
+FROM alpine:3.20 AS hub-src
+RUN apk add --no-cache git \
+    && git clone --depth 1 https://github.com/Sexlovr/ai-hub-frontend.git /hub
+
 FROM ghcr.io/sillytavern/sillytavern:latest AS sillytavern
 FROM ghcr.io/pasta-devs/marinara-engine:lite AS marinara
 FROM ghcr.io/prolix-oc/lumiverse:latest AS lumiverse
@@ -16,17 +20,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && mkdir -p /tmp && chmod 777 /tmp
 
 COPY --from=lumiverse /usr/local/bin/bun /usr/local/bin/bun
-COPY docker /opt/hub/docker/
-COPY scripts /opt/hub/scripts/
-COPY config /opt/hub/config/
-COPY public /opt/hub/public/
+COPY --from=hub-src --chown=node:node /hub/docker /opt/hub/docker/
+COPY --from=hub-src --chown=node:node /hub/scripts /opt/hub/scripts/
+COPY --from=hub-src --chown=node:node /hub/config /opt/hub/config/
+COPY --from=hub-src --chown=node:node /hub/public /opt/hub/public/
 RUN cp /opt/hub/public/index.html /opt/hub/public/hub.html
 COPY --from=sillytavern --chown=node:node /home/node/app /apps/sillytavern
 COPY --from=marinara --chown=node:node /app /apps/marinara
 COPY --from=lumiverse --chown=node:node /app /apps/lumiverse
 
-RUN chown -R node:node /opt/hub \
-    && chmod +x /opt/hub/docker/*.sh /opt/hub/scripts/*.sh \
+RUN chmod +x /opt/hub/docker/*.sh /opt/hub/scripts/*.sh \
     && chmod +x /opt/hub/docker/start-all-apps.sh \
     && echo 'upstream active_backend { server 127.0.0.1:8000; }' > /opt/hub/docker/upstream.conf \
     && /opt/hub/docker/patch-lumiverse-auth.sh \
