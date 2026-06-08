@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""HF public gateway on :7860 — parallel apps via /apps/{name}/ + Referer routing."""
+"""HF public gateway on :7860 — parallel apps via /apps/{name}/ with base-href injection."""
 from __future__ import annotations
 
 import http.client
 import json
 import os
+import re
 import select
 import socket
 import subprocess
@@ -100,7 +101,41 @@ def app_from_referer(referer: str) -> str | None:
     return None
 
 
-def resolve_route(path: str, referer: str, query: str = "") -> tuple[str, str]:
+def app_from_origin(origin: str) -> str | None:
+    if not origin:
+        return None
+    origin = origin.rstrip("/")
+    for app, prefix in APP_PREFIXES.items():
+        if origin.endswith(prefix):
+            return app
+    return None
+
+
+def inject_base_href(body: bytes, prefix: str) -> bytes:
+    """Force /assets and /api requests through the app prefix (fixes multi-tab collisions)."""
+    tag = f'<base href="{prefix}/">'
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError:
+        return body
+    if re.search(r"<base\s", text, re.I):
+        return body
+    head = re.search(r"<head([^>]*)>", text, re.I)
+    if head:
+        pos = head.end()
+        return (text[:pos] + f"\n  {tag}" + text[pos:]).encode("utf-8")
+    return (tag + text).encode("utf-8")
+
+
+def rewrite_location(location: str, prefix: str) -> str:
+    if not location.startswith("/") or location.startswith("//"):
+        return location
+    if location == prefix or location.startswith(prefix + "/"):
+        return location
+    return prefix + location
+
+
+def resolve_route(path: str, referer: str, query: str = "", origin: str = "") -> tuple[str, str]:
     """Return (app_name, backend_path)."""
     for app, prefix in APP_PREFIXES.items():
         if path == prefix:
@@ -108,7 +143,7 @@ def resolve_route(path: str, referer: str, query: str = "") -> tuple[str, str]:
         if path.startswith(prefix + "/"):
             return app, path[len(prefix) :] or "/"
 
-    referer_app = app_from_referer(referer)
+    referer_app = app_from_referer(referer) or app_from_origin(origin)
     if referer_app:
         return referer_app, path
 
@@ -122,7 +157,7 @@ def resolve_route(path: str, referer: str, query: str = "") -> tuple[str, str]:
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
-    server_version = "hub-gateway/3"
+    server_version = "hub-gateway/4"
 
     def log_message(self, fmt: str, *args) -> None:
         print(f"[gateway] {self.address_string()} - {fmt % args}", flush=True)
@@ -208,7 +243,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(
                 200,
                 {
-                    "routing": "parallel (/apps/{app}/ + Referer)",
+                    "routing": "parallel (/apps/{app}/ + base href injection)",
                     "active_fallback": active_app(),
                     "apps": probes,
                     "shared_characters": str(DATA_ROOT / "shared" / "characters"),
@@ -271,7 +306,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _proxy_http(self, method: str) -> None:
         path, query, referer = self._parsed()
-        app, backend_path = resolve_route(path, referer, query)
+        origin = self.headers.get("Origin", "")
+        app, backend_path = resolve_route(path, referer, query, origin)
         if app == "hub":
             self._send_html("index.html")
             return
@@ -279,6 +315,7 @@ class Handler(BaseHTTPRequestHandler):
         if query and "?" not in backend_path:
             backend_path = f"{backend_path}?{query}"
 
+        prefix = APP_PREFIXES.get(app, "")
         port = backend_port(app)
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=3600)
         length = int(self.headers.get("Content-Length", "0") or "0")
@@ -287,14 +324,21 @@ class Handler(BaseHTTPRequestHandler):
         try:
             conn.request(method, backend_path, body=body, headers=self._build_forward_headers(app, backend_path))
             resp = conn.getresponse()
+            data = resp.read()
+            content_type = resp.getheader("Content-Type", "")
+
+            if prefix and "text/html" in content_type.lower():
+                data = inject_base_href(data, prefix)
+
             self.send_response(resp.status)
             for key, value in resp.getheaders():
-                if key.lower() in HOP_BY_HOP:
+                lower = key.lower()
+                if lower in HOP_BY_HOP or lower == "content-length":
                     continue
+                if lower == "location" and prefix:
+                    value = rewrite_location(value, prefix)
                 self.send_header(key, value)
-            data = resp.read()
-            if "Content-Length" not in {k for k, _ in resp.getheaders()}:
-                self.send_header("Content-Length", str(len(data)))
+            self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
         except Exception as exc:
@@ -305,7 +349,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _proxy_websocket(self) -> None:
         path, query, referer = self._parsed()
-        app, backend_path = resolve_route(path, referer, query)
+        origin = self.headers.get("Origin", "")
+        app, backend_path = resolve_route(path, referer, query, origin)
         if app == "hub":
             self.send_error(400, "WebSocket not supported on hub route")
             return
@@ -389,7 +434,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     print(
-        f"[gateway] starting on 0.0.0.0:{HUB_PORT} mode=parallel "
+        f"[gateway] starting on 0.0.0.0:{HUB_PORT} mode=parallel+basehref "
         f"prefixes={','.join(APP_PREFIXES.values())}",
         flush=True,
     )
