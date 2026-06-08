@@ -89,6 +89,16 @@ start_one() {
   echo "[hub] started ${name} pid $(cat "${PID_DIR}/${name}.pid")" >&2
 }
 
+PREV_APP=""
+if [[ -f "${DATA_ROOT}/.active_app" ]]; then
+  PREV_APP="$(cat "${DATA_ROOT}/.active_app")"
+fi
+
+# Export characters from the app we're leaving while it is still running.
+if [[ -n "${PREV_APP}" ]]; then
+  HUB_SYNC_EXPORT="${PREV_APP}" python3 /opt/hub/scripts/hub-sync-import.py 2>&1 || true
+fi
+
 echo "${APP}" > "${DATA_ROOT}/.active_app"
 
 stop_one sillytavern
