@@ -118,8 +118,8 @@ After rebuild you should immediately see `[hub] HF start ...` in Logs.
 |-------|----------------|
 | **Canonical store** | `/data/shared/characters` (PNG/JSON cards), `/data/shared/world_info` (lorebooks) |
 | **SillyTavern** | Symlinks `characters` + `worlds` → shared — **writes here directly** |
-| **Marinara** | Hub sync **auto-imports** new/changed cards into Marinara's DB when Marinara is running (every 5 min + on app switch). Manual fallback: Settings → Import → SillyTavern bulk import from `/data/sillytavern`. |
-| **Lumiverse** | Cards copied to `/data/lumiverse/import-staging/characters` — import via **Characters → Import** (supports V1/V2/V3 PNG/JSON/CHARX). |
+| **Marinara** | Hub sync **exports** Marinara characters to shared as PNG when Marinara is running, and **auto-imports** new/changed shared cards (every 5 min + on app switch). |
+| **Lumiverse** | Hub sync **exports** Lumiverse characters to shared when running, and **auto-imports** shared cards when Lumiverse is up (requires `OWNER_PASSWORD` in HF Secrets for loopback auth). Staging copy also at `/data/lumiverse/import-staging/characters`. |
 
 **No custom translator is required for standard cards.** All three apps use the same industry formats (Tavern Card V1/V2/V3 in PNG `chara`/`ccv3` chunks or JSON). Marinara and Lumiverse already convert those into their own internal schemas on import.
 
@@ -127,12 +127,12 @@ Trigger a sync manually: `GET /api/sync`
 
 > **Connections** (OpenRouter, OpenAI, etc.) are **not** automatically mirrored — each app encrypts/stores them differently. Put exports in `/data/shared/connections/` and import per app.
 
-### Character not in Marinara after creating it in SillyTavern?
+### Character not showing in another frontend?
 
-1. Confirm the PNG exists: `/data/shared/characters/` (SillyTavern saves here via symlink).
-2. **Switch to Marinara** (or wait for the 5‑minute background sync) — import only runs while Marinara is up.
-3. Or hit **`/api/sync`** then refresh Marinara's character list.
-4. In SillyTavern, your character is in the **Characters** panel (same shared folder).
+1. Confirm the PNG exists in `/data/shared/characters/` (SillyTavern writes here directly; Marinara/Lumiverse export here on sync).
+2. **Switch to the target app** (or wait for the 5‑minute background sync) — export runs from the app you're leaving; import runs in the app that is up.
+3. Hit **`/api/sync`** then refresh the character list.
+4. For **Lumiverse auto-import**, keep `OWNER_PASSWORD` set in HF Secrets (same password you use to log in as `admin`).
 
 ## Switching frontends
 
