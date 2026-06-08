@@ -2,9 +2,10 @@
 """
 Bidirectional hub sync via /data/shared (standard Tavern PNG/JSON cards).
 
-Canonical files: hub_{source}_{slug}.png  (one per character name per source app)
-- Never re-import hub_marinara_* into Marinara or hub_lumiverse_* into Lumiverse
-- SillyTavern uses its own characters/ folder; sync copies hub_* cards in/out
+Canonical files: hub_{slug}.png — ONE global file per character name (shared database).
+- Legacy hub_{source}_{slug}.png files are merged into hub_{slug}.png on sync
+- SillyTavern reads shared cards via symlinks (no duplicate PNG copies)
+- Marinara/Lumiverse import once per character name (skip duplicates)
 """
 from __future__ import annotations
 
@@ -34,10 +35,8 @@ ST_ROOT = DATA_ROOT / "sillytavern"
 MARINARA_BUILTIN_IDS = {"__professor_mari__"}
 EXPORT_ONLY = os.environ.get("HUB_SYNC_EXPORT", "").strip().lower()
 OWNER_PASSWORD = os.environ.get("OWNER_PASSWORD") or os.environ.get("HUB_SYNC_PASSWORD", "")
-HUB_PREFIX_RE = re.compile(r"^hub_(st|marinara|lumiverse)_", re.I)
-LEGACY_HUB_RE = re.compile(r"^hub_(st|marinara|lumiverse)_[A-Za-z0-9]{6,8}_", re.I)
-CANONICAL_HUB_RE = re.compile(r"^hub_(marinara|lumiverse)_[a-z][a-z0-9_]*\.png$", re.I)
-CANONICAL_ST_HUB_RE = re.compile(r"^hub_st_[a-z][a-z0-9_]*\.png$", re.I)
+HUB_SOURCE_PREFIX_RE = re.compile(r"^hub_(st|marinara|lumiverse)_", re.I)
+GLOBAL_CANONICAL_RE = re.compile(r"^hub_[a-z][a-z0-9_]+\.png$", re.I)
 ST_ID_PREFIX_RE = re.compile(r"^[A-Za-z0-9]{6,12}\s+")
 ST_RANDOM_ID_SLUG_RE = re.compile(r"^([a-z0-9]{6,12})_")
 
@@ -171,12 +170,29 @@ def name_slug(name: str) -> str:
     return slug[:60] or "character"
 
 
-def canonical_filename(source: str, name: str) -> str:
-    return f"hub_{source}_{name_slug(name)}.png"
+def canonical_filename(_source: str, name: str) -> str:
+    return f"hub_{name_slug(name)}.png"
 
 
-def canonical_key(source: str, name: str) -> str:
-    return f"canonical:{source}:{name_slug(name)}"
+def canonical_key(_source: str, name: str) -> str:
+    return f"canonical:{name_slug(name)}"
+
+
+def is_global_canonical(name: str) -> bool:
+    return bool(GLOBAL_CANONICAL_RE.match(name)) and not HUB_SOURCE_PREFIX_RE.match(name)
+
+
+def is_legacy_source_canonical(name: str) -> bool:
+    return bool(HUB_SOURCE_PREFIX_RE.match(name)) and name.lower().endswith(".png")
+
+
+def global_slug_from_filename(name: str) -> str | None:
+    if is_global_canonical(name):
+        return name[len("hub_") : -4]
+    m = re.match(r"^hub_(?:st|marinara|lumiverse)_([a-z][a-z0-9_]*)\.png$", name, re.I)
+    if m and not is_random_st_id_slug(m.group(1)):
+        return m.group(1)
+    return None
 
 
 def lumiverse_owner_username() -> str:
@@ -420,13 +436,16 @@ def marinara_character_names() -> set[str]:
 
 
 def char_name_from_path(path: Path) -> str:
+    slug = global_slug_from_filename(path.name)
+    if slug:
+        return slug.replace("_", " ")
     stem = path.stem
-    if HUB_PREFIX_RE.match(path.name):
+    if HUB_SOURCE_PREFIX_RE.match(path.name):
         parts = stem.split("_", 2)
         if len(parts) >= 3:
-            slug = parts[2]
-            if parts[1] in {"marinara", "lumiverse", "st"} and not is_random_st_id_slug(slug):
-                return slug.replace("_", " ")
+            legacy_slug = parts[2]
+            if not is_random_st_id_slug(legacy_slug):
+                return legacy_slug.replace("_", " ")
     return st_display_name(stem)
 
 
@@ -436,18 +455,80 @@ def st_display_name(stem: str) -> str:
 
 
 def is_valid_shared_card(name: str) -> bool:
-    if re.match(r"^default_.+\.(png|json)$", name, re.I):
+    if is_global_canonical(name):
         return True
-    if CANONICAL_HUB_RE.match(name):
-        return True
-    if CANONICAL_ST_HUB_RE.match(name):
-        slug = name[len("hub_st_") : -4]
-        return not is_random_st_id_slug(slug)
+    if is_legacy_source_canonical(name):
+        slug = global_slug_from_filename(name)
+        return slug is not None and not is_random_st_id_slug(slug)
     return False
 
 
-def is_importable_hub_for_st(name: str) -> bool:
-    return bool(CANONICAL_HUB_RE.match(name))
+def is_importable_global(name: str) -> bool:
+    return is_global_canonical(name)
+
+
+def migrate_legacy_canonicals(state: dict) -> int:
+    """Merge hub_{source}_{slug}.png → hub_{slug}.png (newest file wins)."""
+    char_dir = SHARED / "characters"
+    if not char_dir.is_dir():
+        return 0
+
+    best_by_slug: dict[str, tuple[Path, float]] = {}
+    for path in char_dir.iterdir():
+        if not path.is_file() or path.suffix.lower() != ".png":
+            continue
+        slug = global_slug_from_filename(path.name)
+        if not slug or is_random_st_id_slug(slug):
+            continue
+        mtime = path.stat().st_mtime_ns
+        prev = best_by_slug.get(slug)
+        if not prev or mtime > prev[1]:
+            best_by_slug[slug] = (path, mtime)
+
+    merged = 0
+    for slug, (src_path, _) in best_by_slug.items():
+        dest = char_dir / f"hub_{slug}.png"
+        if dest.is_file() and dest.resolve() == src_path.resolve():
+            continue
+        try:
+            if dest.is_file():
+                if dest.stat().st_mtime_ns >= src_path.stat().st_mtime_ns and dest.read_bytes() == src_path.read_bytes():
+                    pass
+                else:
+                    shutil.copy2(src_path, dest)
+            else:
+                shutil.copy2(src_path, dest)
+            name = char_name_from_path(dest)
+            ckey = canonical_key("shared", name)
+            state["exports"][ckey] = {
+                "file": f"characters/{dest.name}",
+                "filename": dest.name,
+                "updated": file_sig(dest),
+                "name": name,
+                "source_id": src_path.name,
+            }
+            state["characters"][f"characters/{dest.name}"] = file_sig(dest)
+            merged += 1
+            log(f"canonical character: characters/{dest.name} (from {src_path.name})")
+        except OSError as exc:
+            log(f"canonical merge failed for {src_path.name}: {exc}")
+
+    removed = 0
+    for path in list(char_dir.iterdir()):
+        if not path.is_file():
+            continue
+        if is_legacy_source_canonical(path.name):
+            slug = global_slug_from_filename(path.name)
+            global_path = char_dir / f"hub_{slug}.png" if slug else None
+            if global_path and global_path.is_file():
+                try:
+                    path.unlink()
+                    state["characters"].pop(f"characters/{path.name}", None)
+                    removed += 1
+                    log(f"removed legacy duplicate: characters/{path.name}")
+                except OSError as exc:
+                    log(f"legacy cleanup failed for {path.name}: {exc}")
+    return merged + removed
 
 
 def cleanup_shared_junk(state: dict) -> int:
@@ -698,39 +779,66 @@ def sync_st_to_shared(state: dict) -> int:
     return copied
 
 
-def sync_shared_to_st(state: dict) -> int:
+def st_character_names() -> set[str]:
+    names: set[str] = set()
+    if not ST_CHARS.is_dir():
+        return names
+    for path in ST_CHARS.iterdir():
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in {".png", ".json"}:
+            continue
+        if path.name.startswith("hub_"):
+            continue
+        names.add(st_display_name(path.stem).strip().lower())
+    return names
+
+
+def sync_shared_symlinks_to_st(state: dict) -> int:
+    """Link shared hub_{slug}.png into ST as {Name}.png — single on-disk copy."""
     char_dir = SHARED / "characters"
     if not char_dir.is_dir():
         return 0
     ST_CHARS.mkdir(parents=True, exist_ok=True)
-    copied = 0
-    existing = {p.name.lower() for p in ST_CHARS.iterdir() if p.is_file()}
+    linked = 0
+    existing_names = st_character_names()
 
     for path in sorted(char_dir.iterdir()):
-        if not path.is_file() or path.suffix.lower() != ".png":
-            continue
-        if not is_importable_hub_for_st(path.name):
+        if not path.is_file() or not is_importable_global(path.name):
             continue
 
         name = char_name_from_path(path)
         target_name = f"{safe_name(name)}.png"
-        if target_name.lower() in existing:
-            st_key = f"st_dst:{target_name}"
-            sig = file_sig(path)
-            if state["characters"].get(st_key) == sig:
+        card_key = name.strip().lower()
+        if card_key in existing_names:
+            st_key = f"st_link:{target_name}"
+            if state["characters"].get(st_key) == file_sig(path):
                 continue
 
         target = ST_CHARS / target_name
+        shared_abs = path.resolve()
         try:
-            shutil.copy2(path, target)
-            state["characters"][f"st_dst:{target_name}"] = file_sig(path)
-            existing.add(target_name.lower())
-            copied += 1
-            log(f"imported character → sillytavern: {target_name}")
-        except OSError as exc:
-            log(f"ST import failed for {path.name}: {exc}")
+            if target.is_symlink():
+                if target.resolve() == shared_abs:
+                    state["characters"][f"st_link:{target_name}"] = file_sig(path)
+                    continue
+                target.unlink()
+            elif target.is_file():
+                # Real local ST card with same filename — do not overwrite.
+                state["characters"][f"st_link:{target_name}"] = file_sig(path)
+                existing_names.add(card_key)
+                log(f"ST keep local card (not replaced): {target_name}")
+                continue
 
-    return copied
+            target.symlink_to(shared_abs)
+            state["characters"][f"st_link:{target_name}"] = file_sig(path)
+            existing_names.add(card_key)
+            linked += 1
+            log(f"linked shared → sillytavern: {target_name} → {path.name}")
+        except OSError as exc:
+            log(f"ST symlink failed for {path.name}: {exc}")
+
+    return linked
 
 
 def import_characters_to_marinara(state: dict) -> int:
@@ -750,7 +858,7 @@ def import_characters_to_marinara(state: dict) -> int:
         ext = path.suffix.lower()
         if ext not in {".png", ".json", ".charx"}:
             continue
-        if path.name.lower().startswith("hub_marinara_"):
+        if not is_importable_global(path.name):
             continue
 
         rel = str(path.relative_to(SHARED))
@@ -761,7 +869,7 @@ def import_characters_to_marinara(state: dict) -> int:
         card_name = char_name_from_path(path).strip().lower()
         if card_name and card_name in existing_names:
             state["characters"][rel] = sig
-            log(f"marinara skip duplicate name: {path.name}")
+            log(f"marinara skip duplicate: {card_name} ({path.name})")
             continue
 
         pending.append((rel, path))
@@ -809,6 +917,25 @@ def import_characters_to_marinara(state: dict) -> int:
     return imported
 
 
+def lumiverse_character_names(opener: urllib.request.OpenerDirector, auth_headers: dict[str, str]) -> set[str]:
+    base = f"http://127.0.0.1:{LUMIVERSE_PORT}"
+    status, payload = http_json(
+        "GET",
+        f"{base}/api/v1/characters?limit=500&offset=0",
+        headers=auth_headers,
+        opener=opener,
+    )
+    if status >= 400 or not isinstance(payload, dict):
+        return set()
+    chars = payload.get("data") or []
+    names: set[str] = set()
+    if isinstance(chars, list):
+        for item in chars:
+            if isinstance(item, dict) and item.get("name"):
+                names.add(str(item["name"]).strip().lower())
+    return names
+
+
 def import_characters_to_lumiverse(state: dict) -> int:
     char_dir = SHARED / "characters"
     if not char_dir.is_dir():
@@ -820,6 +947,7 @@ def import_characters_to_lumiverse(state: dict) -> int:
     if not session:
         return 0
     opener, auth_headers = session
+    existing_names = lumiverse_character_names(opener, auth_headers)
 
     pending: list[tuple[str, Path]] = []
     for path in sorted(char_dir.iterdir()):
@@ -828,13 +956,20 @@ def import_characters_to_lumiverse(state: dict) -> int:
         ext = path.suffix.lower()
         if ext not in {".png", ".json", ".charx"}:
             continue
-        if path.name.lower().startswith("hub_lumiverse_"):
+        if not is_importable_global(path.name):
             continue
 
         rel = str(path.relative_to(SHARED))
         sig = file_sig(path)
         if state["characters"].get(rel) == sig:
             continue
+
+        card_name = char_name_from_path(path).strip().lower()
+        if card_name and card_name in existing_names:
+            state["characters"][rel] = sig
+            log(f"lumiverse skip duplicate: {card_name} ({path.name})")
+            continue
+
         pending.append((rel, path))
 
     if not pending:
@@ -924,6 +1059,7 @@ def main() -> int:
         log(f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} syncing shared library")
         state = load_state()
         cleanup_shared_junk(state)
+        migrate_legacy_canonicals(state)
 
         n_export_marinara = export_marinara_to_shared(state)
         n_export_lumiverse = export_lumiverse_to_shared(state)
@@ -933,7 +1069,7 @@ def main() -> int:
             rsync_shared()
             n_chars_marinara = import_characters_to_marinara(state)
             n_chars_lumiverse = import_characters_to_lumiverse(state)
-            n_chars_st = sync_shared_to_st(state)
+            n_chars_st = sync_shared_symlinks_to_st(state)
             n_worlds = import_lorebooks_to_marinara(state)
         else:
             n_chars_marinara = 0
