@@ -369,8 +369,14 @@ def lumiverse_session() -> tuple[urllib.request.OpenerDirector, dict[str, str]] 
         sign_in_headers["Origin"] = base
 
     body = json.dumps({"username": username, "password": OWNER_PASSWORD}).encode("utf-8")
+    # Prefer public gateway URL when available — matches browser auth path + forwarded headers.
+    if public_origin:
+        sign_in_url = f"{public_origin.rstrip('/')}/apps/lumiverse/api/auth/sign-in/username"
+        sign_in_headers.setdefault("X-Forwarded-Prefix", "/apps/lumiverse")
+    else:
+        sign_in_url = f"{base}/api/auth/sign-in/username"
     req = urllib.request.Request(
-        f"{base}/api/auth/sign-in/username",
+        sign_in_url,
         data=body,
         headers=sign_in_headers,
         method="POST",
@@ -469,6 +475,13 @@ def is_importable_global(name: str) -> bool:
     return is_global_canonical(name)
 
 
+SLUG_ALIASES = {"default_seraphina": "seraphina"}
+
+
+def normalize_slug(slug: str) -> str:
+    return SLUG_ALIASES.get(slug, slug)
+
+
 def migrate_legacy_canonicals(state: dict) -> int:
     """Merge hub_{source}_{slug}.png → hub_{slug}.png (newest file wins)."""
     char_dir = SHARED / "characters"
@@ -482,6 +495,7 @@ def migrate_legacy_canonicals(state: dict) -> int:
         slug = global_slug_from_filename(path.name)
         if not slug or is_random_st_id_slug(slug):
             continue
+        slug = normalize_slug(slug)
         mtime = path.stat().st_mtime_ns
         prev = best_by_slug.get(slug)
         if not prev or mtime > prev[1]:
