@@ -43,6 +43,13 @@ def patch_js(text: str) -> str:
     text = text.replace("/api/v1/theme-assets", f"{prefix}/api/v1/theme-assets")
     text = text.replace("/api/v1/image-gen", f"{prefix}/api/v1/image-gen")
     for old, new in (
+        ('"/assets/', f'"{prefix}/assets/'),
+        ("'/assets/", f"'{prefix}/assets/"),
+        ("`/assets/", f"`{prefix}/assets/"),
+    ):
+        if f"{prefix}/assets/" not in text:
+            text = text.replace(old, new)
+    for old, new in (
         ("basename:e=`/`", f"basename:e=`{prefix}`"),
         ("e.basename||`/`", f"e.basename||`{prefix}`"),
         ("S=e.basename||`/`", f"S=e.basename||`{prefix}`"),
