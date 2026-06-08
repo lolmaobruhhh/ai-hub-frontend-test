@@ -121,4 +121,7 @@ else
   echo "[hub] nginx reload skipped (not running yet)" >&2
 fi
 
+# Pull new SillyTavern cards into Marinara/Lumiverse staging when switching apps.
+/opt/hub/scripts/sync-shared-data.sh 2>&1 || echo "[hub] warn: sync-shared-data" >&2
+
 echo "[hub] switched to ${APP} on internal port ${PORT}" >&2
