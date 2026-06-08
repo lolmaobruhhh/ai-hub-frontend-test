@@ -47,6 +47,11 @@ def active_app() -> str:
     return "sillytavern"
 
 
+def set_active_app(app: str) -> None:
+    ACTIVE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ACTIVE_FILE.write_text(f"{app}\n", encoding="utf-8")
+
+
 def backend_port(app: str | None = None) -> int:
     return PORTS.get(app or active_app(), PORTS["sillytavern"])
 
@@ -118,7 +123,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
-    def _run_switch(self, app: str) -> tuple[int, list[str]]:
+    def _run_switch_heavy(self, app: str) -> None:
         try:
             proc = subprocess.run(
                 [SWITCH_SCRIPT, app],
@@ -130,13 +135,16 @@ class Handler(BaseHTTPRequestHandler):
             out = (proc.stdout or proc.stderr or "").strip().splitlines()
             tail = out[-5:] if out else []
             if proc.returncode != 0:
-                print(f"[gateway] switch to {app} exit {proc.returncode}: {tail}", flush=True)
+                print(f"[gateway] switch heavy work for {app} exit {proc.returncode}: {tail}", flush=True)
             else:
-                print(f"[gateway] switch to {app} ok — active={active_app()}: {tail}", flush=True)
-            return proc.returncode, tail
+                print(f"[gateway] switch heavy work for {app} done: {tail}", flush=True)
         except Exception as exc:
-            print(f"[gateway] switch to {app} failed: {exc}", flush=True)
-            return 1, [str(exc)]
+            print(f"[gateway] switch heavy work for {app} failed: {exc}", flush=True)
+
+    def _switch_to(self, app: str) -> None:
+        set_active_app(app)
+        print(f"[gateway] switch to {app} — routing active={active_app()}", flush=True)
+        threading.Thread(target=self._run_switch_heavy, args=(app,), daemon=True).start()
 
     def _handle_hub_route(self, method: str) -> bool:
         path = urlparse(self.path).path
@@ -213,7 +221,7 @@ class Handler(BaseHTTPRequestHandler):
             if app not in PORTS:
                 self._send_json(400, {"error": "unknown app"})
                 return True
-            self._run_switch(app)
+            self._switch_to(app)
             self._send_html("switching.html")
             return True
 
