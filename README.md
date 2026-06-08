@@ -118,8 +118,9 @@ After rebuild you should immediately see `[hub] HF start ...` in Logs.
 |-------|----------------|
 | **Canonical store** | `/data/shared/characters` (PNG/JSON cards), `/data/shared/world_info` (lorebooks) |
 | **SillyTavern** | Symlinks `characters` + `worlds` → shared — **writes here directly** |
-| **Marinara** | Hub sync **exports** Marinara characters to shared as PNG when Marinara is running, and **auto-imports** new/changed shared cards (every 5 min + on app switch). |
-| **Lumiverse** | Hub sync **exports** Lumiverse characters to shared when running, and **auto-imports** shared cards when Lumiverse is up (requires `OWNER_PASSWORD` in HF Secrets for loopback auth). Staging copy also at `/data/lumiverse/import-staging/characters`. |
+| **Marinara** | Hub sync uses **one canonical PNG per character** (`hub_marinara_{name}.png`). Never re-imports its own exports. |
+| **Lumiverse** | Same canonical pattern (`hub_lumiverse_{name}.png`). Auto-import/export needs `OWNER_PASSWORD` in HF Secrets (must match your Lumiverse login password; username is read from `owner.credentials`). |
+| **SillyTavern** | Own `characters/` folder (not symlinked). Sync copies `hub_*` cards in/out to avoid duplicate explosions. |
 
 **No custom translator is required for standard cards.** All three apps use the same industry formats (Tavern Card V1/V2/V3 in PNG `chara`/`ccv3` chunks or JSON). Marinara and Lumiverse already convert those into their own internal schemas on import.
 
@@ -132,7 +133,8 @@ Trigger a sync manually: `GET /api/sync`
 1. Confirm the PNG exists in `/data/shared/characters/` (SillyTavern writes here directly; Marinara/Lumiverse export here on sync).
 2. **Switch to the target app** (or wait for the 5‑minute background sync) — export runs from the app you're leaving; import runs in the app that is up.
 3. Hit **`/api/sync`** then refresh the character list.
-4. For **Lumiverse auto-import**, keep `OWNER_PASSWORD` set in HF Secrets (same password you use to log in as `admin`).
+4. For **Lumiverse auto-import**, set `OWNER_PASSWORD` in HF Secrets to your **actual Lumiverse login password** (username is auto-read from `/data/lumiverse/owner.credentials` — do not set a wrong `OWNER_USERNAME`).
+5. **Shortcuts:** `/sillytavern`, `/lumiverse`, `/marinara` switch the active UI (all three backends stay running).
 
 ## Switching frontends
 
