@@ -114,11 +114,25 @@ After rebuild you should immediately see `[hub] HF start ...` in Logs.
 
 ### How sharing works
 
-- **SillyTavern** symlinks `characters` and `worlds` directly to `/data/shared/*` — changes are immediate.
-- **Marinara** reads `/data/shared` via `IMPORT_ALLOWED_ROOTS` and periodic sync into import staging. Use **Settings → Import → SillyTavern bulk import** (or set `ADMIN_SECRET` for automatic scan).
-- **Lumiverse** receives synced cards in `import-staging/`; import them via the Lumiverse UI (character import supports V1/V2/V3 cards).
+| Layer | What happens |
+|-------|----------------|
+| **Canonical store** | `/data/shared/characters` (PNG/JSON cards), `/data/shared/world_info` (lorebooks) |
+| **SillyTavern** | Symlinks `characters` + `worlds` → shared — **writes here directly** |
+| **Marinara** | Hub sync **auto-imports** new/changed cards into Marinara's DB when Marinara is running (every 5 min + on app switch). Manual fallback: Settings → Import → SillyTavern bulk import from `/data/sillytavern`. |
+| **Lumiverse** | Cards copied to `/data/lumiverse/import-staging/characters` — import via **Characters → Import** (supports V1/V2/V3 PNG/JSON/CHARX). |
 
-> **Connections** (OpenRouter, OpenAI, etc.) are **not** automatically mirrored across apps today — each frontend encrypts and stores them in its own schema. Store reusable connection JSON in `/data/shared/connections/` and import per app, or configure once per frontend.
+**No custom translator is required for standard cards.** All three apps use the same industry formats (Tavern Card V1/V2/V3 in PNG `chara`/`ccv3` chunks or JSON). Marinara and Lumiverse already convert those into their own internal schemas on import.
+
+Trigger a sync manually: `GET /api/sync`
+
+> **Connections** (OpenRouter, OpenAI, etc.) are **not** automatically mirrored — each app encrypts/stores them differently. Put exports in `/data/shared/connections/` and import per app.
+
+### Character not in Marinara after creating it in SillyTavern?
+
+1. Confirm the PNG exists: `/data/shared/characters/` (SillyTavern saves here via symlink).
+2. **Switch to Marinara** (or wait for the 5‑minute background sync) — import only runs while Marinara is up.
+3. Or hit **`/api/sync`** then refresh Marinara's character list.
+4. In SillyTavern, your character is in the **Characters** panel (same shared folder).
 
 ## Switching frontends
 
