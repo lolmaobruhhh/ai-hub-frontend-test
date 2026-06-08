@@ -95,6 +95,29 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"active": active_app()})
             return
 
+        if path == "/api/sync":
+            try:
+                proc = subprocess.run(
+                    ["/opt/hub/scripts/sync-shared-data.sh"],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                    check=False,
+                )
+                lines = (proc.stdout or proc.stderr or "").strip().splitlines()
+                tail = lines[-8:] if lines else []
+                self._json(
+                    200,
+                    {
+                        "ok": proc.returncode == 0,
+                        "exit_code": proc.returncode,
+                        "log": tail,
+                    },
+                )
+            except Exception as exc:
+                self._json(500, {"ok": False, "error": str(exc)})
+            return
+
         if path.startswith("/api/switch/"):
             app = path.rsplit("/", 1)[-1].lower()
             if app not in APP_PORTS:
