@@ -5,6 +5,7 @@ DATA_ROOT="${DATA_ROOT:-/data}"
 LUMIVERSE_PORT="${LUMIVERSE_PORT:-7861}"
 cd /apps/lumiverse
 
+export PATH="/usr/local/bin:/usr/bin:/bin:${PATH:-}"
 export NODE_ENV=production
 export PORT="${LUMIVERSE_PORT}"
 export DATA_DIR="${DATA_ROOT}/lumiverse"
