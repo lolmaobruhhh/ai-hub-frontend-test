@@ -357,7 +357,7 @@ def lumiverse_session() -> tuple[urllib.request.OpenerDirector, dict[str, str]] 
     public_origin = resolve_public_origin()
     sign_in_headers: dict[str, str] = {"Accept": "application/json", "Content-Type": "application/json"}
     if public_origin:
-        sign_in_headers["Origin"] = f"{public_origin}/apps/lumiverse"
+        sign_in_headers["Origin"] = public_origin
         sign_in_headers["X-Forwarded-Prefix"] = "/apps/lumiverse"
         try:
             host = public_origin.split("://", 1)[1]
