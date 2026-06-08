@@ -141,29 +141,96 @@ def fix_base_href(text: str, prefix: str) -> str:
     return tag + text
 
 
-def rewrite_root_paths(text: str, prefix: str) -> str:
-    """Rewrite root-absolute URLs — HTML <base> does NOT affect paths starting with /."""
+def _skip_path(path: str, prefix: str) -> bool:
+    return path.startswith(prefix + "/") or path.startswith("//") or any(
+        path.startswith(h) for h in HUB_API_PREFIXES
+    )
 
-    def skip(path: str) -> bool:
-        return path.startswith(prefix + "/") or path.startswith("//") or any(
-            path.startswith(h) for h in HUB_API_PREFIXES
-        )
+
+def rewrite_root_paths(text: str, prefix: str) -> str:
+    """Rewrite root-absolute URLs in HTML/CSS/JSON — <base> does NOT affect paths starting with /."""
 
     def repl_quoted(match: re.Match[str]) -> str:
         quote, path = match.group(1), match.group(2)
-        if skip(path):
+        if _skip_path(path, prefix):
             return match.group(0)
         return f"{quote}{prefix}{path}{quote}"
 
     text = re.sub(r'(["\'])(/(?!/)[^"\'\\]*)\1', repl_quoted, text)
     text = re.sub(
         r'(\bimport\s*\(\s*)(["\'])(/(?!/)[^"\'\\]*)\2',
-        lambda m: f"{m.group(1)}{m.group(2)}{prefix}{m.group(3)}{m.group(2)}",
+        lambda m: (
+            f"{m.group(1)}{m.group(2)}{prefix}{m.group(3)}{m.group(2)}"
+            if not _skip_path(m.group(3), prefix)
+            else m.group(0)
+        ),
         text,
     )
     text = re.sub(
         r'(\bnew URL\s*\(\s*)(["\'])(/(?!/)[^"\'\\]*)\2',
-        lambda m: f"{m.group(1)}{m.group(2)}{prefix}{m.group(3)}{m.group(2)}",
+        lambda m: (
+            f"{m.group(1)}{m.group(2)}{prefix}{m.group(3)}{m.group(2)}"
+            if not _skip_path(m.group(3), prefix)
+            else m.group(0)
+        ),
+        text,
+    )
+    return text
+
+
+def strip_erroneous_app_prefix(text: str, prefix: str) -> str:
+    """Undo legacy v5 gateway rewriting of API endpoint suffixes in JS bundles."""
+
+    def repl_quoted(match: re.Match[str]) -> str:
+        quote, path = match.group(1), match.group(2)
+        if not path.startswith(prefix + "/") or path.startswith(prefix + "/api/"):
+            return match.group(0)
+        return f"{quote}{path[len(prefix):]}{quote}"
+
+    return re.sub(r'(["\'])(/[^"\'\\]+)\1', repl_quoted, text)
+
+
+def rewrite_js_api_paths(text: str, prefix: str) -> str:
+    """Rewrite only /api* URLs in JS.
+
+    Do NOT prefix bare endpoint suffixes like "/chats" — Marinara composes
+    fetch(`${API_BASE}${endpoint}`) and double-prefixing breaks every API call.
+    """
+    text = strip_erroneous_app_prefix(text, prefix)
+
+    def repl_quoted(match: re.Match[str]) -> str:
+        quote, path = match.group(1), match.group(2)
+        if not path.startswith("/api") or _skip_path(path, prefix):
+            return match.group(0)
+        return f"{quote}{prefix}{path}{quote}"
+
+    def repl_backtick(match: re.Match[str]) -> str:
+        path = match.group(1)
+        if not path.startswith("/api") or _skip_path(path, prefix):
+            return match.group(0)
+        return f"`{prefix}{path}`"
+
+    text = text.replace('const At="/api"', f'const At="{prefix}/api"')
+    text = text.replace("const At='/api'", f"const At='{prefix}/api'")
+    text = text.replace("qs=`/api/v1`", f"qs=`{prefix}/api/v1`")
+    text = re.sub(r'(["\'])(/api[^"\'\\]*)\1', repl_quoted, text)
+    text = re.sub(r"`(/api[^`\\]*)`", repl_backtick, text)
+    text = re.sub(
+        r'(\bimport\s*\(\s*)(["\'])(/api[^"\'\\]*)\2',
+        lambda m: (
+            f"{m.group(1)}{m.group(2)}{prefix}{m.group(3)}{m.group(2)}"
+            if not _skip_path(m.group(3), prefix)
+            else m.group(0)
+        ),
+        text,
+    )
+    text = re.sub(
+        r'(\bnew URL\s*\(\s*)(["\'])(/api[^"\'\\]*)\2',
+        lambda m: (
+            f"{m.group(1)}{m.group(2)}{prefix}{m.group(3)}{m.group(2)}"
+            if not _skip_path(m.group(3), prefix)
+            else m.group(0)
+        ),
         text,
     )
     return text
@@ -182,9 +249,12 @@ def rewrite_app_body(data: bytes, content_type: str, prefix: str) -> bytes:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         return data
-    if "text/html" in ct:
-        text = fix_base_href(text, prefix)
-    text = rewrite_root_paths(text, prefix)
+    if "javascript" in ct:
+        text = rewrite_js_api_paths(text, prefix)
+    else:
+        if "text/html" in ct:
+            text = fix_base_href(text, prefix)
+        text = rewrite_root_paths(text, prefix)
     return text.encode("utf-8")
 
 
@@ -218,7 +288,7 @@ def resolve_route(path: str, referer: str, query: str = "", origin: str = "") ->
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
-    server_version = "hub-gateway/5"
+    server_version = "hub-gateway/6"
 
     def log_message(self, fmt: str, *args) -> None:
         print(f"[gateway] {self.address_string()} - {fmt % args}", flush=True)
@@ -305,6 +375,7 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 {
                     "routing": "parallel (/apps/{app}/ + URL rewrite)",
+                    "gateway_version": self.server_version,
                     "active_fallback": active_app(),
                     "apps": probes,
                     "shared_characters": str(DATA_ROOT / "shared" / "characters"),
@@ -400,6 +471,8 @@ class Handler(BaseHTTPRequestHandler):
                 if lower == "location" and prefix:
                     value = rewrite_location(value, prefix)
                 self.send_header(key, value)
+            if prefix and "javascript" in content_type.lower():
+                self.send_header("Cache-Control", "no-cache")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
