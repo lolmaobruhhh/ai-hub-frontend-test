@@ -23,4 +23,12 @@ else
 fi
 
 mkdir -p "${DATA_DIR}"
+
+# Re-apply hub patches every boot (lumiverse runs from src/, not pre-baked dist only).
+if ! bash /opt/hub/docker/patch-lumiverse-auth.sh; then
+  echo "[lumiverse] FATAL: auth subpath patch failed — check /apps/lumiverse/src/app.ts" >&2
+  exit 1
+fi
+bash /opt/hub/docker/patch-lumiverse-sw.sh || echo "[lumiverse] warn: PWA patch failed" >&2
+
 exec bun run src/index.ts
