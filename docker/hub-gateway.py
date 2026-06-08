@@ -58,6 +58,15 @@ HOP_BY_HOP = {
 
 SKIP_REQUEST_HEADERS = {"host", "connection", "content-length", "transfer-encoding"}
 
+MAX_JS_REWRITE_BYTES = int(os.environ.get("MAX_JS_REWRITE_BYTES", "524288"))
+
+# Markers that build-time patch scripts (docker/patch-*-subpaths.sh) have run.
+BUILD_PATCH_MARKERS: dict[str, tuple[str, ...]] = {
+    "sillytavern": ("/apps/sillytavern/api/", "/apps/sillytavern/csrf-token"),
+    "lumiverse": ("/apps/lumiverse/api/v1", "basename:e=`/apps/lumiverse`"),
+    "marinara": ("/apps/marinara/api", 'const At="/apps/marinara/api"'),
+}
+
 
 def active_app() -> str:
     if ACTIVE_FILE.is_file():
@@ -254,6 +263,29 @@ def rewrite_js_api_paths(text: str, prefix: str) -> str:
     return text
 
 
+def js_already_build_patched(text: str, app: str) -> bool:
+    markers = BUILD_PATCH_MARKERS.get(app)
+    if not markers:
+        return False
+    return any(marker in text for marker in markers)
+
+
+def patch_lumiverse_router_basename(text: str, prefix: str) -> str:
+    """React Router defaults to basename=/ — routes fail under /apps/lumiverse/."""
+    marker = f"basename:e=`{prefix}`"
+    if marker in text:
+        return text
+    replacements = (
+        ("basename:e=`/`", marker),
+        ("e.basename||`/`", f"e.basename||`{prefix}`"),
+        ("S=e.basename||`/`", f"S=e.basename||`{prefix}`"),
+        ("c=e.basename||`/`", f"c=e.basename||`{prefix}`"),
+    )
+    for old, new in replacements:
+        text = text.replace(old, new)
+    return text
+
+
 def rewrite_app_body(data: bytes, content_type: str, prefix: str, app: str = "") -> bytes:
     if not prefix:
         return data
@@ -268,8 +300,14 @@ def rewrite_app_body(data: bytes, content_type: str, prefix: str, app: str = "")
     except UnicodeDecodeError:
         return data
     if "javascript" in ct:
-        # SillyTavern uses full root paths (/csrf-token, /version, /api/...).
-        # Marinara/Lumiverse compose URLs as ${API_BASE}${suffix} — only rewrite /api*.
+        if app == "lumiverse":
+            patched = patch_lumiverse_router_basename(text, prefix)
+            if patched != text:
+                return patched.encode("utf-8")
+        if js_already_build_patched(text, app):
+            return data
+        if len(data) > MAX_JS_REWRITE_BYTES:
+            return data
         if app == "sillytavern":
             text = rewrite_root_paths(text, prefix)
         else:
@@ -313,7 +351,7 @@ def resolve_route(path: str, referer: str, query: str = "", origin: str = "") ->
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
-    server_version = "hub-gateway/7"
+    server_version = "hub-gateway/8"
 
     def log_message(self, fmt: str, *args) -> None:
         print(f"[gateway] {self.address_string()} - {fmt % args}", flush=True)
@@ -399,7 +437,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(
                 200,
                 {
-                    "routing": "parallel (/apps/{app}/ + URL rewrite)",
+                    "routing": "parallel (/apps/{app}/ + build-time subpath patch)",
                     "gateway_version": self.server_version,
                     "active_fallback": active_app(),
                     "apps": probes,
