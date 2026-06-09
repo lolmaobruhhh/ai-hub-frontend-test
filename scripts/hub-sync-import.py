@@ -604,7 +604,21 @@ def cleanup_shared_junk(state: dict) -> int:
             if slug:
                 canon = canonical_slug(slug)
                 if canon != slug and canon in canonical_files:
-                    # This is an alias card — canonical already exists
+                    # This is an alias card — canonical already exists.
+                    # BEFORE deleting, repoint any ST symlinks to the canonical file.
+                    canonical_path = canonical_files[canon]
+                    st_dir = DATA_ROOT / "sillytavern" / "data" / "default-user" / "characters"
+                    if st_dir.is_dir():
+                        alias_abs = path.resolve()
+                        for st_entry in st_dir.iterdir():
+                            if st_entry.is_symlink():
+                                try:
+                                    if st_entry.resolve() == alias_abs:
+                                        st_entry.unlink()
+                                        st_entry.symlink_to(canonical_path.resolve())
+                                        log(f"repointed ST symlink: {st_entry.name} → hub_{canon}.png")
+                                except OSError:
+                                    pass
                     try:
                         path.unlink()
                         state["characters"].pop(f"characters/{path.name}", None)
@@ -663,7 +677,20 @@ def write_canonical_export(
         state["characters"][rel] = file_sig(dest)
         return False
 
-    dest.write_bytes(png_bytes)
+    # Atomic write: write to temp first, then rename — prevents
+    # SillyTavern from reading a partially-written file mid-sync.
+    tmp = dest.with_suffix(dest.suffix + ".hubsync-tmp")
+    try:
+        tmp.write_bytes(png_bytes)
+        tmp.replace(dest)
+    except OSError:
+        # Fallback: direct write if atomic rename fails (e.g. cross-device)
+        dest.write_bytes(png_bytes)
+        if tmp.is_file():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
     state["exports"][ckey] = {
         "file": rel,
         "filename": filename,
@@ -683,7 +710,10 @@ def export_marinara_to_shared(state: dict) -> int:
 
     status, payload = http_json("GET", f"http://127.0.0.1:{MARINARA_PORT}/api/characters/")
     if status >= 400 or not isinstance(payload, list):
-        log(f"marinara list failed ({status}): {payload}")
+        log(f"marinara list failed ({status}): {str(payload)[:200]}")
+        return 0
+    if not payload:
+        log("marinara returned empty character list — no characters to export")
         return 0
 
     best: dict[str, dict] = {}
@@ -724,7 +754,7 @@ def export_marinara_to_shared(state: dict) -> int:
             f"http://127.0.0.1:{MARINARA_PORT}/api/characters/{info['char_id']}/export-png"
         )
         if png_status >= 400 or not png_bytes:
-            log(f"marinara export failed for {info['char_id']} ({png_status})")
+            log(f"marinara export failed for {info['char_id']} '{info.get('name','?')}' (HTTP {png_status}, {len(png_bytes) if png_bytes else 0} bytes)")
             continue
 
         if write_canonical_export(
@@ -817,6 +847,15 @@ def sync_st_to_shared(state: dict) -> int:
         # Skip symlinks — these point BACK to shared and must not be re-exported
         # (would create circular copies and duplicate characters).
         if path.is_symlink():
+            # Clean up dangling symlinks (target was deleted)
+            try:
+                path.resolve(strict=True)
+            except (OSError, FileNotFoundError):
+                try:
+                    path.unlink()
+                    log(f"removed dangling ST symlink during export sweep: {path.name}")
+                except OSError:
+                    pass
             continue
         if not path.is_file():
             continue
@@ -895,6 +934,18 @@ def sync_shared_symlinks_to_st(state: dict) -> int:
     ST_CHARS.mkdir(parents=True, exist_ok=True)
     linked = 0
     existing_names = st_character_names()
+
+    # First, clean up any dangling ST symlinks (target was deleted by cleanup)
+    for st_entry in list(ST_CHARS.iterdir()):
+        if st_entry.is_symlink():
+            try:
+                st_entry.resolve(strict=True)
+            except (OSError, FileNotFoundError):
+                try:
+                    st_entry.unlink()
+                    log(f"removed dangling ST symlink: {st_entry.name}")
+                except OSError:
+                    pass
 
     for path in sorted(char_dir.iterdir()):
         if not path.is_file() or not is_importable_global(path.name):
