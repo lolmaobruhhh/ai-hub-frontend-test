@@ -116,8 +116,9 @@ for path in root.rglob("*"):
         elif name.endswith((".css", ".json")):
             text = rewrite_static(text)
         elif name.endswith((".js", ".mjs")):
+            # API paths + router basename only — never rewrite_static on minified JS
+            # (breaks regex literals and causes blue/black SPA screens).
             text = rewrite_api_js(text)
-            text = rewrite_static(text)
             if prefix.endswith("/lumiverse"):
                 text = rewrite_router_basename(text)
         if text != original:
