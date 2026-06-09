@@ -1,11 +1,11 @@
 # =============================================================================
 # AI Frontends Hub — Hugging Face Space (UID 1000 / node user, lightweight)
-# Repo: https://github.com/Sexlovr/ai-hub-frontend
+# Repo: https://github.com/lolmaobruhhh/ai-hub-frontend-test
 # =============================================================================
 
 FROM alpine:3.20 AS hub-src
 RUN apk add --no-cache git \
-    && git clone --depth 1 https://github.com/Sexlovr/ai-hub-frontend.git /hub
+    && git clone --depth 1 https://github.com/lolmaobruhhh/ai-hub-frontend-test.git /hub
 
 FROM ghcr.io/sillytavern/sillytavern:latest AS sillytavern
 FROM ghcr.io/pasta-devs/marinara-engine:lite AS marinara
