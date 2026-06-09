@@ -44,6 +44,7 @@ HUB_ONLY_PATHS = {
     "/hub/",
     "/hub.html",
     "/hub/favicon.ico",
+    "/sw.js",
 }
 
 # Root-level paths Vite SPAs still request without Referer (dynamic import / PWA).
@@ -545,8 +546,39 @@ class Handler(BaseHTTPRequestHandler):
                 for p in shared_chars.glob("hub_*.png")
                 if p.is_file()
             ) if shared_chars.is_dir() else []
+
+            # Count characters per app for debug visibility
+            st_chars_dir = DATA_ROOT / "sillytavern" / "data" / "default-user" / "characters"
+            st_char_count = len([
+                p for p in st_chars_dir.iterdir()
+                if p.is_file() and p.suffix.lower() in {".png", ".json"} and not p.name.startswith("hub_")
+            ]) if st_chars_dir.is_dir() else 0
+            import subprocess as _sp
+            ma_char_count = 0
+            lu_char_count = 0
+            try:
+                if port_open(PORTS["marinara"]):
+                    import urllib.request as _ur
+                    _resp = _ur.urlopen(f"http://127.0.0.1:{PORTS['marinara']}/api/characters/", timeout=3)
+                    _data = json.loads(_resp.read())
+                    ma_char_count = len(_data) if isinstance(_data, list) else 0
+            except Exception:
+                pass
+            try:
+                if port_open(PORTS["lumiverse"]):
+                    import urllib.request as _ur2
+                    _resp2 = _ur2.urlopen(f"http://127.0.0.1:{PORTS['lumiverse']}/api/v1/characters?limit=1", timeout=3)
+                    _data2 = json.loads(_resp2.read())
+                    if isinstance(_data2, dict) and "data" in _data2:
+                        # Try to get total count
+                        lu_char_count = len(_data2.get("data", []))
+            except Exception:
+                pass
             sync_state = DATA_ROOT / ".hub-sync" / "import-state.json"
             sync_hint = {
+                "st_character_count": st_char_count,
+                "marinara_character_count": ma_char_count,
+                "lumiverse_character_count": lu_char_count,
                 "owner_password_set": bool(
                     os.environ.get("OWNER_PASSWORD") or os.environ.get("HUB_SYNC_PASSWORD")
                 ),
@@ -572,8 +604,30 @@ class Handler(BaseHTTPRequestHandler):
             return True
 
         if path == "/api/sync" and method == "GET":
-            threading.Thread(target=self._run_sync_background, daemon=True).start()
-            self._send_json(200, {"ok": True, "message": "sync started in background"})
+            # Run sync synchronously so the caller gets actual results
+            import subprocess as _sp
+            try:
+                proc = _sp.run(
+                    [SYNC_SCRIPT], capture_output=True, text=True, timeout=300, check=False,
+                )
+                lines = (proc.stdout or proc.stderr or "").strip().splitlines()
+                tail = lines[-12:] if lines else []
+                self._send_json(200, {
+                    "ok": proc.returncode == 0,
+                    "exit_code": proc.returncode,
+                    "log": tail,
+                })
+            except Exception as exc:
+                self._send_json(500, {"ok": False, "error": str(exc)})
+            return True
+
+        if path == "/sw.js" and method == "GET":
+            self._send_bytes(
+                200,
+                (PUBLIC / "sw.js").read_bytes(),
+                "application/javascript",
+                {"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"},
+            )
             return True
 
         if path == "/hub/favicon.ico" and method == "GET":
@@ -686,6 +740,18 @@ class Handler(BaseHTTPRequestHandler):
                     "Set-Cookie",
                     f"hub_app={app}; Path=/; SameSite=Lax; Max-Age=86400",
                 )
+            # Inject hub service worker registration for ST root pages
+            # to ensure stale PWA caches from Lumiverse/Marinara are cleared
+            if "text/html" in content_type.lower() and app == "sillytavern":
+                if b"</head>" in data and b"hub-sw-register" not in data:
+                    sw_script = (
+                        b'<script id="hub-sw-register">'
+                        b'if("serviceWorker"in navigator){'
+                        b'navigator.serviceWorker.register("/sw.js",{scope:"/"}).catch(function(){});'
+                        b'}'
+                        b'</script>'
+                    )
+                    data = data.replace(b"</head>", sw_script + b"</head>", 1)
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)

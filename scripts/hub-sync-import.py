@@ -354,27 +354,29 @@ def lumiverse_session() -> tuple[urllib.request.OpenerDirector, dict[str, str]] 
     jar = CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
     base = f"http://127.0.0.1:{LUMIVERSE_PORT}"
+
+    # ALWAYS authenticate directly against Lumiverse's port — never through the
+    # public gateway.  The gateway rewrites paths and adds forwarded headers that
+    # confuse BetterAuth.  Direct-port auth with explicit forwarded-prefix is the
+    # reliable path for server-to-server sync.
+    sign_in_url = f"{base}/api/auth/sign-in/username"
+    sign_in_headers: dict[str, str] = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Origin": base,
+        "X-Forwarded-Prefix": "/apps/lumiverse",
+        "X-Forwarded-Proto": "https",
+    }
+    # Add X-Forwarded-Host from public origin if available (BetterAuth needs it)
     public_origin = resolve_public_origin()
-    sign_in_headers: dict[str, str] = {"Accept": "application/json", "Content-Type": "application/json"}
     if public_origin:
-        sign_in_headers["Origin"] = public_origin
-        sign_in_headers["X-Forwarded-Prefix"] = "/apps/lumiverse"
         try:
             host = public_origin.split("://", 1)[1]
             sign_in_headers["X-Forwarded-Host"] = host
-            sign_in_headers["X-Forwarded-Proto"] = "https"
         except IndexError:
-            sign_in_headers["Origin"] = base
-    else:
-        sign_in_headers["Origin"] = base
+            pass
 
     body = json.dumps({"username": username, "password": OWNER_PASSWORD}).encode("utf-8")
-    # Prefer public gateway URL when available — matches browser auth path + forwarded headers.
-    if public_origin:
-        sign_in_url = f"{public_origin.rstrip('/')}/apps/lumiverse/api/auth/sign-in/username"
-        sign_in_headers.setdefault("X-Forwarded-Prefix", "/apps/lumiverse")
-    else:
-        sign_in_url = f"{base}/api/auth/sign-in/username"
     req = urllib.request.Request(
         sign_in_url,
         data=body,
@@ -409,6 +411,7 @@ def lumiverse_session() -> tuple[urllib.request.OpenerDirector, dict[str, str]] 
     token = extract_bearer_token(payload, set_cookies, response_headers)
     if token:
         auth_headers["Authorization"] = f"Bearer {token}"
+        log(f"lumiverse authenticated as '{username}' (token obtained)")
     else:
         log(
             f"lumiverse sign-in for '{username}' ok but no bearer token "
@@ -755,6 +758,10 @@ def sync_st_to_shared(state: dict) -> int:
     char_dir.mkdir(parents=True, exist_ok=True)
 
     for path in sorted(ST_CHARS.iterdir()):
+        # Skip symlinks — these point BACK to shared and must not be re-exported
+        # (would create circular copies and duplicate characters).
+        if path.is_symlink():
+            continue
         if not path.is_file():
             continue
         ext = path.suffix.lower()
@@ -808,10 +815,12 @@ def sync_st_to_shared(state: dict) -> int:
 
 
 def st_character_names() -> set[str]:
+    """Return display names of all ST characters (native + symlinked from shared)."""
     names: set[str] = set()
     if not ST_CHARS.is_dir():
         return names
     for path in ST_CHARS.iterdir():
+        # Include both real files AND symlinks (symlinks = shared cards linked in)
         if not path.is_file():
             continue
         if path.suffix.lower() not in {".png", ".json"}:
@@ -878,6 +887,7 @@ def import_characters_to_marinara(state: dict) -> int:
         return 0
 
     existing_names = marinara_character_names()
+    log(f"marinara has {len(existing_names)} characters: {sorted(existing_names)[:10]}")
     pending: list[tuple[str, Path]] = []
 
     for path in sorted(char_dir.iterdir()):
@@ -891,23 +901,32 @@ def import_characters_to_marinara(state: dict) -> int:
 
         rel = str(path.relative_to(SHARED))
         sig = file_sig(path)
-        if state["characters"].get(rel) == sig:
-            continue
 
+        # Check if character already exists in Marinara by name (most reliable)
         card_name = char_name_from_path(path).strip().lower()
         if card_name and card_name in existing_names:
+            # Character exists — update state sig so we don't re-check next cycle
             state["characters"][rel] = sig
-            log(f"marinara skip duplicate: {card_name} ({path.name})")
             continue
 
-        pending.append((rel, path))
+        # State says imported but character is gone from Marinara — re-import
+        if state["characters"].get(rel) == sig:
+            # Double-check: maybe the name changed or dedup was wrong
+            if card_name and card_name not in existing_names:
+                log(f"marinara re-import (missing despite state): {card_name} ({path.name})")
+            else:
+                continue
+
+        pending.append((rel, path, card_name))
 
     if not pending:
         return 0
 
     imported = 0
+
+    # Try batch import first
     batch: list[tuple[str, bytes]] = []
-    batch_meta: list[str] = []
+    batch_meta: list[tuple[str, str]] = []  # (rel, card_name)
 
     def flush_batch() -> None:
         nonlocal imported, batch, batch_meta
@@ -916,32 +935,59 @@ def import_characters_to_marinara(state: dict) -> int:
         url = f"http://127.0.0.1:{MARINARA_PORT}/api/import/st-character/batch"
         status, payload = multipart_batch(url, batch)
         if status >= 400:
-            log(f"marinara character batch import failed ({status}): {payload}")
+            log(f"marinara batch import failed ({status}) — falling back to single-file")
+            # Fallback: try single-file imports
+            for i, (name, data) in enumerate(batch):
+                rel, card_name = batch_meta[i]
+                single_url = f"http://127.0.0.1:{MARINARA_PORT}/api/import/st-character"
+                s_status, s_payload = multipart_batch(single_url, [(name, data)])
+                if s_status < 400:
+                    result = s_payload if isinstance(s_payload, dict) else {}
+                    if result.get("success", True):
+                        state["characters"][rel] = file_sig(SHARED / rel)
+                        imported += 1
+                        log(f"imported character → marinara (single): {rel}")
+                    else:
+                        log(f"marinara single import failed for {rel}: {result}")
+                else:
+                    log(f"marinara single import HTTP {s_status} for {rel}")
             batch = []
             batch_meta = []
             return
         results = payload.get("results", []) if isinstance(payload, dict) else []
-        for rel, result in zip(batch_meta, results):
-            if result.get("success"):
+        for i, result in enumerate(results):
+            if i >= len(batch_meta):
+                break
+            rel, card_name = batch_meta[i]
+            if isinstance(result, dict) and result.get("success"):
                 state["characters"][rel] = file_sig(SHARED / rel)
                 imported += 1
                 log(f"imported character → marinara: {rel}")
             else:
-                log(f"marinara import failed for {rel}: {result.get('error', 'unknown')}")
+                err = result.get("error", "unknown") if isinstance(result, dict) else "unknown"
+                log(f"marinara import failed for {rel}: {err}")
         batch = []
         batch_meta = []
 
-    for rel, path in pending:
+    for rel, path, card_name in pending:
         try:
-            content = path.read_bytes()
+            file_content = path.read_bytes()
         except OSError as exc:
             log(f"read failed {rel}: {exc}")
             continue
-        batch.append((path.name, content))
-        batch_meta.append(rel)
+        batch.append((path.name, file_content))
+        batch_meta.append((rel, card_name))
         if len(batch) >= 10:
             flush_batch()
     flush_batch()
+
+    # Verify import: refresh Marinara names and confirm
+    if imported > 0:
+        new_names = marinara_character_names()
+        newly_visible = new_names - existing_names
+        if newly_visible:
+            log(f"marinara now has {len(newly_visible)} new characters: {sorted(newly_visible)}")
+
     return imported
 
 
@@ -969,15 +1015,18 @@ def import_characters_to_lumiverse(state: dict) -> int:
     if not char_dir.is_dir():
         return 0
     if not backend_up(LUMIVERSE_PORT):
+        log("lumiverse not running — skip lumiverse import")
         return 0
 
     session = lumiverse_session()
     if not session:
+        log("lumiverse import skipped — OWNER_PASSWORD required for Lumiverse API access")
         return 0
     opener, auth_headers = session
     existing_names = lumiverse_character_names(opener, auth_headers)
+    log(f"lumiverse has {len(existing_names)} characters: {sorted(existing_names)[:10]}")
 
-    pending: list[tuple[str, Path]] = []
+    pending: list[tuple[str, Path, str]] = []
     for path in sorted(char_dir.iterdir()):
         if not path.is_file():
             continue
@@ -989,44 +1038,81 @@ def import_characters_to_lumiverse(state: dict) -> int:
 
         rel = str(path.relative_to(SHARED))
         sig = file_sig(path)
-        if state["characters"].get(rel) == sig:
-            continue
-
         card_name = char_name_from_path(path).strip().lower()
+
+        # Character already in Lumiverse — mark as synced
         if card_name and card_name in existing_names:
             state["characters"][rel] = sig
-            log(f"lumiverse skip duplicate: {card_name} ({path.name})")
             continue
 
-        pending.append((rel, path))
+        # State says imported but character gone — re-import
+        if state["characters"].get(rel) == sig:
+            if card_name and card_name not in existing_names:
+                log(f"lumiverse re-import (missing despite state): {card_name} ({path.name})")
+            else:
+                continue
+
+        pending.append((rel, path, card_name))
 
     if not pending:
         return 0
 
     imported = 0
+
+    # Try batch import first, fall back to single-file
     batch: list[tuple[str, bytes]] = []
-    batch_meta: list[str] = []
+    batch_meta: list[tuple[str, str]] = []
 
     def flush_batch() -> None:
         nonlocal imported, batch, batch_meta
         if not batch:
             return
+
+        # Try bulk endpoint first
         url = f"http://127.0.0.1:{LUMIVERSE_PORT}/api/v1/characters/import-bulk"
         status, payload = multipart_batch(
-            url,
-            batch,
-            opener=opener,
+            url, batch, opener=opener,
             fields={"skip_duplicates": "true"},
             headers=auth_headers,
         )
+
         if status >= 400:
-            log(f"lumiverse character batch import failed ({status}): {payload}")
+            log(f"lumiverse batch import failed ({status}) — trying single-file imports")
+            # Fallback: single-file import endpoint
+            single_url = f"http://127.0.0.1:{LUMIVERSE_PORT}/api/v1/characters/import"
+            for i, (name, data) in enumerate(batch):
+                rel, card_name = batch_meta[i]
+                s_status, s_payload = multipart_batch(
+                    single_url, [(name, data)],
+                    opener=opener,
+                    headers=auth_headers,
+                )
+                if s_status < 400:
+                    state["characters"][rel] = file_sig(SHARED / rel)
+                    imported += 1
+                    log(f"imported character → lumiverse (single): {rel}")
+                else:
+                    log(f"lumiverse single import HTTP {s_status} for {rel}")
             batch = []
             batch_meta = []
             return
+
         results = payload.get("results", []) if isinstance(payload, dict) else []
-        for rel, result in zip(batch_meta, results):
-            if result.get("success"):
+        # If no results array, treat whole batch as success if status < 400
+        if not results and isinstance(payload, dict) and not payload.get("error"):
+            for rel, card_name in batch_meta:
+                state["characters"][rel] = file_sig(SHARED / rel)
+                imported += 1
+                log(f"imported character → lumiverse: {rel}")
+            batch = []
+            batch_meta = []
+            return
+
+        for i, result in enumerate(results):
+            if i >= len(batch_meta):
+                break
+            rel, card_name = batch_meta[i]
+            if isinstance(result, dict) and result.get("success"):
                 state["characters"][rel] = file_sig(SHARED / rel)
                 if not result.get("skipped"):
                     imported += 1
@@ -1034,21 +1120,30 @@ def import_characters_to_lumiverse(state: dict) -> int:
                 else:
                     log(f"lumiverse skipped duplicate: {rel}")
             else:
-                log(f"lumiverse import failed for {rel}: {result.get('error', 'unknown')}")
+                err = result.get("error", "unknown") if isinstance(result, dict) else "unknown"
+                log(f"lumiverse import failed for {rel}: {err}")
         batch = []
         batch_meta = []
 
-    for rel, path in pending:
+    for rel, path, card_name in pending:
         try:
-            content = path.read_bytes()
+            file_content = path.read_bytes()
         except OSError as exc:
             log(f"read failed {rel}: {exc}")
             continue
-        batch.append((path.name, content))
-        batch_meta.append(rel)
+        batch.append((path.name, file_content))
+        batch_meta.append((rel, card_name))
         if len(batch) >= 10:
             flush_batch()
     flush_batch()
+
+    # Verify
+    if imported > 0:
+        new_names = lumiverse_character_names(opener, auth_headers)
+        newly_visible = new_names - existing_names
+        if newly_visible:
+            log(f"lumiverse now has {len(newly_visible)} new characters: {sorted(newly_visible)}")
+
     return imported
 
 

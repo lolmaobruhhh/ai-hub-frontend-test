@@ -12,6 +12,9 @@
       --card: #1a1f2e;
       --accent: #ff6b4a;
       --accent2: #4ecdc4;
+      --green: #4ecdc4;
+      --red: #ff6b6b;
+      --yellow: #ffd93d;
       --text: #e8ecf4;
       --muted: #8b95a8;
     }
@@ -44,6 +47,7 @@
       color: inherit;
       transition: transform 0.15s, border-color 0.15s;
       cursor: pointer;
+      position: relative;
     }
     a.card:hover {
       transform: translateY(-2px);
@@ -51,15 +55,42 @@
     }
     a.card strong { display: block; font-size: 1.1rem; margin-bottom: 0.35rem; }
     a.card span { color: var(--muted); font-size: 0.9rem; line-height: 1.4; }
+    .status-dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    .status-dot.up { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .status-dot.down { background: var(--red); }
+    .status-dot.loading { background: var(--yellow); animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+    .toolbar {
+      display: flex; gap: 0.75rem; flex-wrap: wrap;
+      margin-top: 1.5rem; align-items: center;
+    }
+    .btn {
+      padding: 0.5rem 1.1rem;
+      border-radius: 8px;
+      border: 1px solid #2a3348;
+      background: var(--card);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: border-color 0.15s;
+    }
+    .btn:hover { border-color: var(--accent2); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .badge {
       display: inline-block;
-      margin-top: 2rem;
       padding: 0.35rem 0.75rem;
       border-radius: 999px;
       background: #243049;
       color: var(--accent2);
       font-size: 0.85rem;
     }
+    #sync-status { font-size: 0.8rem; color: var(--muted); margin-top: 0.5rem; }
     footer {
       margin-top: 2rem;
       color: var(--muted);
@@ -73,58 +104,108 @@
   <main>
     <h1>AI Frontends Hub</h1>
     <p class="lead">
-      All three frontends run at once. Each opens in a <strong>new tab</strong> — use them in parallel
-      (SillyTavern + Lumiverse + Marinara simultaneously).
-    </p>
-    <p class="lead" style="margin-top:-1.25rem;font-size:0.9rem;">
-      Characters live in one shared library: <code>/data/shared/characters/hub_{name}.png</code>
-      (one file per character, no per-app clones).
+      All three frontends run at once. Each opens in a <strong>new tab</strong> — use them in parallel.
+      Characters live in one shared library: <code>/data/shared/characters/</code>.
     </p>
     <div class="grid">
-      <a class="card" href="/" target="_blank" rel="noopener noreferrer">
-        <strong>SillyTavern</strong>
-        <span>Classic ST UI at / — native paths, no subpath hacks.</span>
+      <a class="card" href="/" target="_blank" rel="noopener noreferrer" id="card-st">
+        <strong><span class="status-dot loading" id="dot-st"></span>SillyTavern</strong>
+        <span>Classic ST UI at <code>/</code> — native paths, no subpath hacks.</span>
       </a>
-      <a class="card" href="/apps/lumiverse/" target="_blank" rel="noopener noreferrer">
-        <strong>Lumiverse</strong>
-        <span>Bun + SQLite. Imports from shared library once.</span>
+      <a class="card" href="/apps/lumiverse/" target="_blank" rel="noopener noreferrer" id="card-lu">
+        <strong><span class="status-dot loading" id="dot-lu"></span>Lumiverse</strong>
+        <span>Bun + SQLite at <code>/apps/lumiverse/</code>. Imports from shared library.</span>
       </a>
-      <a class="card" href="/apps/marinara/" target="_blank" rel="noopener noreferrer">
-        <strong>Marinara Engine</strong>
-        <span>Roleplay engine. Imports from shared library once.</span>
+      <a class="card" href="/apps/marinara/" target="_blank" rel="noopener noreferrer" id="card-ma">
+        <strong><span class="status-dot loading" id="dot-ma"></span>Marinara Engine</strong>
+        <span>Roleplay engine at <code>/apps/marinara/</code>. Imports from shared library.</span>
       </a>
     </div>
-    <div class="badge" id="status">Checking backends…</div>
+
+    <div class="toolbar">
+      <button class="btn" id="sync-btn" onclick="triggerSync()">🔄 Sync Characters</button>
+      <span class="badge" id="status">Checking backends…</span>
+    </div>
+    <div id="sync-status"></div>
+
     <footer>
-      Hub launcher: <code>/hub</code> or <code>/api/hub</code>.
-      Apps: SillyTavern <code>/</code>,
-      Lumiverse <code>/apps/lumiverse/</code>,
-      Marinara <code>/apps/marinara/</code>.
+      Hub: <code>/hub</code> or <code>/api/hub</code> ·
+      Debug: <code>/api/debug</code> ·
+      Sync: <code>/api/sync</code>
     </footer>
   </main>
   <script>
-    (async function clearLumiversePwa() {
+    (async function clearPwa() {
       if (!('serviceWorker' in navigator)) return;
       try {
         const regs = await navigator.serviceWorker.getRegistrations();
-        await Promise.all(regs.map((r) => r.unregister()));
+        await Promise.allSettled(regs.map((r) => r.unregister()));
         if ('caches' in window) {
           const keys = await caches.keys();
-          await Promise.all(keys.map((k) => caches.delete(k)));
+          await Promise.allSettled(keys.map((k) => caches.delete(k)));
         }
-      } catch (_) { /* ignore */ }
+      } catch (_) {}
     })();
 
-    fetch('/api/ready').then(r => r.json()).then(d => {
-      const apps = d.ready || {};
-      const up = Object.entries(apps).filter(([, v]) => v).map(([k]) => k);
-      const el = document.getElementById('status');
-      el.textContent = up.length
-        ? `Backends ready: ${up.join(', ')}`
-        : 'Backends still starting…';
-    }).catch(() => {
-      document.getElementById('status').textContent = 'Hub API starting…';
-    });
+    const dots = {
+      sillytavern: document.getElementById('dot-st'),
+      lumiverse: document.getElementById('dot-lu'),
+      marinara: document.getElementById('dot-ma'),
+    };
+
+    function updateDots(probes) {
+      for (const [app, dot] of Object.entries(dots)) {
+        if (!dot) continue;
+        const ready = probes && probes[app];
+        dot.className = 'status-dot ' + (ready ? 'up' : 'down');
+      }
+    }
+
+    async function refresh() {
+      try {
+        const res = await fetch('/api/ready', { cache: 'no-store' });
+        const data = await res.json();
+        const probes = data.ready || {};
+        updateDots(probes);
+        const up = Object.entries(probes).filter(([, v]) => v).map(([k]) => k);
+        const total = Object.keys(probes).length;
+        document.getElementById('status').textContent =
+          up.length === total
+            ? `All ${total} backends ready ✓`
+            : `${up.length}/${total} backends ready`;
+      } catch (_) {
+        document.getElementById('status').textContent = 'Hub API unavailable';
+        for (const dot of Object.values(dots)) {
+          if (dot) dot.className = 'status-dot down';
+        }
+      }
+    }
+
+    async function triggerSync() {
+      const btn = document.getElementById('sync-btn');
+      const statusEl = document.getElementById('sync-status');
+      btn.disabled = true;
+      btn.textContent = '⏳ Syncing…';
+      statusEl.textContent = 'Triggering character sync across all frontends…';
+      try {
+        const res = await fetch('/api/sync', { cache: 'no-store' });
+        const data = await res.json();
+        if (data.ok) {
+          statusEl.textContent = '✅ Sync completed — refresh individual apps to see new characters.';
+        } else {
+          statusEl.textContent = `⚠️ Sync finished with issues: ${(data.error || JSON.stringify(data.log || [])).slice(0, 200)}`;
+        }
+      } catch (e) {
+        statusEl.textContent = `❌ Sync failed: ${e.message}`;
+      }
+      btn.disabled = false;
+      btn.textContent = '🔄 Sync Characters';
+      // Re-check status after sync
+      setTimeout(refresh, 2000);
+    }
+
+    refresh();
+    setInterval(refresh, 10000);
   </script>
 </body>
 </html>

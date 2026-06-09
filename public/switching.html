@@ -18,10 +18,20 @@
     }
     p { max-width: 32rem; line-height: 1.5; }
     .muted { color: #8b95a8; font-size: 0.9rem; }
+    .spinner {
+      width: 2rem; height: 2rem;
+      border: 3px solid #2a3348;
+      border-top-color: #ff6b4a;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 1rem;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
   <div>
+    <div class="spinner"></div>
     <p id="status">Switching frontend…</p>
     <p class="muted" id="hint">Clearing cached app shell, then loading the active frontend…</p>
   </div>
@@ -29,17 +39,35 @@
     const status = document.getElementById('status');
     const hint = document.getElementById('hint');
     let tries = 0;
+
+    // Determine target app URL from the switch path
     const parts = location.pathname.split('/').filter(Boolean);
     const targetApp = (parts[parts.length - 1] || '').toLowerCase();
 
+    const APP_URLS = {
+      sillytavern: '/',
+      lumiverse: '/apps/lumiverse/',
+      marinara: '/apps/marinara/',
+    };
+
+    function getTargetUrl(app) {
+      return APP_URLS[app] || '/';
+    }
+
     async function clearCachedAppShell() {
+      // Unregister ALL service workers aggressively
       if ('serviceWorker' in navigator) {
-        const regs = await navigator.serviceWorker.getRegistrations();
-        await Promise.all(regs.map((r) => r.unregister()));
+        try {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.allSettled(regs.map((r) => r.unregister()));
+        } catch (_) {}
       }
+      // Clear ALL caches
       if ('caches' in window) {
-        const keys = await caches.keys();
-        await Promise.all(keys.map((k) => caches.delete(k)));
+        try {
+          const keys = await caches.keys();
+          await Promise.allSettled(keys.map((k) => caches.delete(k)));
+        } catch (_) {}
       }
     }
 
@@ -48,28 +76,47 @@
       try {
         const readyRes = await fetch('/api/ready', { cache: 'no-store' });
         const readyData = await readyRes.json();
-        const active = (readyData.active || '').toLowerCase();
-        const label = targetApp || active || 'frontend';
+        const probes = readyData.ready || {};
+        const label = targetApp || 'frontend';
         status.textContent = `Starting ${label}… (${tries * 2}s)`;
 
-        const activeOk = !targetApp || active === targetApp;
-        if (readyData.ready && activeOk) {
+        // Check if the TARGET app specifically is ready (not just any app)
+        const targetReady = targetApp ? probes[targetApp] : Object.values(probes).some(Boolean);
+
+        if (targetReady) {
           await clearCachedAppShell();
+          const targetUrl = getTargetUrl(targetApp);
           const bust = `_hub=${Date.now()}`;
-          const page = await fetch(`/?${bust}`, { method: 'GET', cache: 'no-store' });
-          if (page.ok) {
-            window.location.replace(`/?${bust}`);
-            return;
+          // Verify the target page is actually serving before redirecting
+          try {
+            const page = await fetch(targetUrl + '?' + bust, { method: 'HEAD', cache: 'no-store' });
+            if (page.ok || page.status === 304) {
+              window.location.replace(targetUrl + (targetUrl.includes('?') ? '&' : '?') + bust);
+              return;
+            }
+          } catch (_) {
+            // If HEAD fails, try GET
+            try {
+              const page = await fetch(targetUrl + '?' + bust, { method: 'GET', cache: 'no-store', redirect: 'follow' });
+              if (page.ok) {
+                window.location.replace(targetUrl + (targetUrl.includes('?') ? '&' : '?') + bust);
+                return;
+              }
+            } catch (_2) {}
           }
-        } else if (readyData.ready && targetApp && active !== targetApp) {
-          status.textContent = `Waiting for switch to ${targetApp} (active: ${active || 'unknown'})…`;
+          status.textContent = `${label} backend is up but page not ready yet… (${tries * 2}s)`;
+        } else {
+          const upApps = Object.entries(probes).filter(([, v]) => v).map(([k]) => k);
+          if (upApps.length > 0) {
+            status.textContent = `Waiting for ${label}… (other apps ready: ${upApps.join(', ')})`;
+          }
         }
       } catch (_) {
         status.textContent = `Waiting for backend… (${tries * 2}s)`;
       }
 
       if (tries > 180) {
-        hint.textContent = 'Still starting. Open /hub to pick a frontend, or refresh the app URL.';
+        hint.textContent = 'Still starting. Open /hub to pick a frontend, or refresh the app URL directly.';
         return;
       }
       setTimeout(poll, 2000);
