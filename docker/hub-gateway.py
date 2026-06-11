@@ -833,6 +833,7 @@ def main() -> None:
         f"st=/ prefixes={','.join(APP_PREFIXES.values())} hub=/hub",
         flush=True,
     )
+    ThreadingHTTPServer.request_queue_size = 512
     server = ThreadingHTTPServer(("0.0.0.0", HUB_PORT), Handler)
     server.serve_forever()
 
