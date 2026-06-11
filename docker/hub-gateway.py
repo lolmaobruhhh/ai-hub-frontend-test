@@ -44,7 +44,6 @@ HUB_ONLY_PATHS = {
     "/hub/",
     "/hub.html",
     "/hub/favicon.ico",
-    "/sw.js",
 }
 
 # Root-level paths Vite SPAs still request without Referer (dynamic import / PWA).
@@ -619,15 +618,6 @@ class Handler(BaseHTTPRequestHandler):
                 })
             except Exception as exc:
                 self._send_json(500, {"ok": False, "error": str(exc)})
-            return True
-
-        if path == "/sw.js" and method == "GET":
-            self._send_bytes(
-                200,
-                (PUBLIC / "sw.js").read_bytes(),
-                "application/javascript",
-                {"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"},
-            )
             return True
 
         if path == "/hub/favicon.ico" and method == "GET":
