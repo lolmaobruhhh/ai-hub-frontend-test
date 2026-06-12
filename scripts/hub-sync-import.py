@@ -167,6 +167,10 @@ def safe_name(value: str, fallback: str = "character") -> str:
 
 def name_slug(name: str) -> str:
     slug = safe_name(name).lower()
+    # Drop a trailing file extension so a name that accidentally carries one
+    # (e.g. "Eldoria.json" coming back from an app that used the filename as the
+    # lorebook name) slugs to "eldoria", not "eldoria_json".
+    slug = re.sub(r"\.(json|png|webp|charx|card)$", "", slug)
     slug = re.sub(r"[^a-z0-9]+", "_", slug).strip("_")
     return slug[:60] or "character"
 
@@ -637,6 +641,28 @@ def cleanup_shared_junk(state: dict) -> int:
             log(f"removed junk from shared: characters/{path.name}")
         except OSError as exc:
             log(f"cleanup failed for {path.name}: {exc}")
+
+    # Step 3 — remove malformed duplicate lorebooks. Older syncs named a
+    # round-tripped lorebook "hub_eldoria_json.json" (the source filename's
+    # ".json" got slugged into "_json"). Drop that artifact when the correct
+    # "hub_eldoria.json" canonical exists.
+    world_dir = SHARED / "world_info"
+    if world_dir.is_dir():
+        existing = {p.name for p in world_dir.iterdir() if p.is_file()}
+        for path in list(world_dir.iterdir()):
+            if not path.is_file() or not path.name.startswith("hub_"):
+                continue
+            if path.name.endswith("_json.json"):
+                canonical = path.name[: -len("_json.json")] + ".json"
+                if canonical != path.name and canonical in existing:
+                    try:
+                        path.unlink()
+                        state.get("world_info", {}).pop(f"world_info/{path.name}", None)
+                        removed += 1
+                        log(f"removed duplicate lorebook from shared: world_info/{path.name} (canonical: {canonical})")
+                    except OSError as exc:
+                        log(f"lorebook cleanup failed for {path.name}: {exc}")
+
     return removed
 
 
@@ -940,18 +966,34 @@ def sync_st_to_shared(state: dict) -> int:
         for path in sorted(st_worlds_dir.glob("*.json")):
             if not path.is_file() or path.name.startswith("hub_"):
                 continue
-            rel = f"world_info/{path.name}"
+            # Canonicalize the shared filename so ST, Marinara and Lumiverse all
+            # converge on ONE file per lorebook (hub_{slug}.json) instead of ST
+            # keeping "Eldoria.json" while the others write "hub_eldoria.json".
+            canon_name = f"hub_{name_slug(path.stem)}.json"
+            rel = f"world_info/{canon_name}"
             sig = file_sig(path)
             prev = state.get("world_info", {}).get(rel)
             if prev == sig:
                 continue
-            dest = world_info_dir / path.name
+            dest = world_info_dir / canon_name
             try:
                 if path.resolve() != dest.resolve():
                     shutil.copy2(path, dest)
                     state.setdefault("world_info", {})[rel] = sig
                     copied += 1
                     log(f"exported lorebook → shared: {rel}")
+                    # Remove the legacy non-canonical copy this routine used to
+                    # write (e.g. shared/world_info/Eldoria.json). The source of
+                    # truth is ST's own worlds dir, so the shared copy is safe to
+                    # drop once the canonical file exists.
+                    legacy = world_info_dir / path.name
+                    if legacy.name != canon_name and legacy.is_file():
+                        try:
+                            legacy.unlink()
+                            state.get("world_info", {}).pop(f"world_info/{path.name}", None)
+                            log(f"removed duplicate lorebook ← shared: world_info/{path.name}")
+                        except OSError:
+                            pass
             except OSError as exc:
                 log(f"ST export lorebook failed {path.name}: {exc}")
 
@@ -1439,7 +1481,17 @@ def import_lorebooks_to_marinara(state: dict) -> int:
         return 0
 
     imported = 0
-    for path in sorted(world_dir.glob("*.json")):
+    all_jsons = sorted(world_dir.glob("*.json"))
+    # Set of canonical slugs present (hub_{slug}.json). If both "Eldoria.json"
+    # and "hub_eldoria.json" exist, import only the canonical one.
+    canonical_slugs = {
+        p.name[len("hub_") : -len(".json")]
+        for p in all_jsons
+        if p.name.startswith("hub_") and p.name.endswith(".json")
+    }
+    for path in all_jsons:
+        if not path.name.startswith("hub_") and name_slug(path.stem) in canonical_slugs:
+            continue  # canonical sibling carries this lorebook
         rel = str(path.relative_to(SHARED))
         sig = file_sig(path)
         if state["world_info"].get(rel) == sig:
@@ -1449,7 +1501,12 @@ def import_lorebooks_to_marinara(state: dict) -> int:
         except Exception as exc:
             log(f"skip lorebook {rel}: {exc}")
             continue
-        payload["__filename"] = path.name
+        # Marinara names the lorebook from the JSON's internal `name`, else from
+        # this fallback. Hand it a clean display name (no hub_ prefix, no .json)
+        # so the round-trip re-export stays stable as hub_{slug}.json instead of
+        # drifting to hub_eldoria_json.json.
+        clean = path.stem[len("hub_"):] if path.stem.startswith("hub_") else path.stem
+        payload["__filename"] = clean.replace("_", " ").strip() or path.stem
         url = f"http://127.0.0.1:{MARINARA_PORT}/api/import/st-lorebook"
         status, result = http_json("POST", url, payload)
         if status < 400 and isinstance(result, dict) and result.get("success", True):

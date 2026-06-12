@@ -938,18 +938,32 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(500, {"error": str(e)})
             return True
 
-        if path in ("/api/storage/chub/search", "/apps/marinara/api/bot-browser/chub/search") and method == "GET":
-            url = build_chub_search_url(query)
-            try:
-                status, body, _ = chub_fetch(url, accept="application/json")
-            except Exception as e:
-                # Network/timeout only — Chub HTTP errors come back as `status`.
-                self._send_json(502, {"error": f"chub search unreachable: {e}"})
+        if path == "/api/storage/delete" and method == "POST":
+            qs = parse_qs(query)
+            target = qs.get("path", [""])[0]
+            if not target:
+                self._send_json(400, {"error": "path required"})
                 return True
-            if status == 200:
-                body = rewrite_chub_avatars(body)
-            # Pass Chub's real status through so failures are visible, not a 500.
-            self._send_bytes(status, body, "application/json")
+            try:
+                target_path = Path(target).resolve()
+                shared_dir = (DATA_ROOT / "shared").resolve()
+                # Only allow deleting regular files inside /data/shared.
+                if not str(target_path).startswith(str(shared_dir) + os.sep) or not target_path.is_file():
+                    self._send_json(403, {"error": "Invalid path"})
+                    return True
+                target_path.unlink()
+                self._send_json(200, {"success": True})
+            except Exception as e:
+                self._send_json(500, {"error": str(e)})
+            return True
+
+        if path in ("/api/storage/chub/search", "/apps/marinara/api/bot-browser/chub/search") and method == "GET":
+            # Cloudflare blocks the HF Space's datacenter IP with a 403 when the
+            # gateway fetches Chub server-side. Instead we 302-redirect the
+            # browser to Chub directly: the user's residential IP + real browser
+            # TLS pass Cloudflare, and Chub sends `Access-Control-Allow-Origin: *`
+            # so the cross-origin JSON read is allowed. No server-side fetch.
+            self._redirect(build_chub_search_url(query))
             return True
 
         if (path.startswith("/api/storage/chub/character/") or path.startswith("/apps/marinara/api/bot-browser/chub/character/")) and method == "GET":
@@ -957,58 +971,21 @@ class Handler(BaseHTTPRequestHandler):
             char_id = path.split("/character/", 1)[1]
             # Re-encode path segments (Author/name) without touching the slash.
             safe_id = quote(char_id, safe="/")
-            url = f"https://api.chub.ai/api/characters/{safe_id}?full=true"
-            try:
-                status, body, _ = chub_fetch(url, accept="application/json")
-            except Exception as e:
-                self._send_json(502, {"error": f"chub character unreachable: {e}"})
-                return True
-            if status == 200:
-                body = rewrite_chub_avatars(body)
-            self._send_bytes(status, body, "application/json")
+            self._redirect(f"https://api.chub.ai/api/characters/{safe_id}?full=true")
             return True
 
         if (path.startswith("/api/storage/chub/avatar/") or path.startswith("/apps/marinara/api/bot-browser/chub/avatar/")) and method == "GET":
             char_id = path.split("/avatar/", 1)[1]
-            base = f"https://avatars.charhub.io/avatars/{char_id}"
-            # Try the requested asset, then fall back to avatar.webp / card png.
-            if base.endswith((".webp", ".png", ".jpg", ".jpeg")):
-                candidates = [base, base.rsplit("/", 1)[0] + "/chara_card_v2.png"]
-            else:
-                candidates = [base + "/avatar.webp", base + "/chara_card_v2.png"]
-            last_status = 502
-            for cand in candidates:
-                try:
-                    status, body, ctype = chub_fetch(
-                        cand, accept="image/webp,image/apng,image/*,*/*;q=0.8"
-                    )
-                except Exception:
-                    continue
-                if status == 200:
-                    if not ctype.startswith("image/"):
-                        ctype = "image/png" if cand.endswith(".png") else "image/webp"
-                    self._send_bytes(200, body, ctype, {"Cache-Control": "public, max-age=86400"})
-                    return True
-                last_status = status
-            self._send_json(last_status if last_status != 200 else 404,
-                            {"error": "avatar not found"})
+            url = f"https://avatars.charhub.io/avatars/{char_id}"
+            if not url.endswith((".webp", ".png", ".jpg", ".jpeg")):
+                url += "/avatar.webp"
+            # <img>/fetch follows the redirect from the browser's own IP.
+            self._redirect(url)
             return True
 
         if (path.startswith("/api/storage/chub/download/") or path.startswith("/apps/marinara/api/bot-browser/chub/download/")) and method == "GET":
             char_id = path.split("/download/", 1)[1]
-            url = f"https://avatars.charhub.io/avatars/{char_id}/chara_card_v2.png"
-            try:
-                status, body, _ = chub_fetch(url, accept="image/png,image/*,*/*;q=0.8")
-            except Exception as e:
-                self._send_json(502, {"error": f"chub download unreachable: {e}"})
-                return True
-            if status != 200:
-                self._send_json(status, {"error": f"chub download failed: {status}"})
-                return True
-            self._send_bytes(200, body, "image/png", {
-                "Content-Disposition": 'attachment; filename="character.png"',
-                "Cache-Control": "public, max-age=86400",
-            })
+            self._redirect(f"https://avatars.charhub.io/avatars/{char_id}/chara_card_v2.png")
             return True
 
         if path == "/api/storage/catbox" and method == "POST":
