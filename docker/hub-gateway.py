@@ -379,11 +379,11 @@ def inject_marinara_chub_proxy(html: str) -> str:
     if (typeof url === 'string') {
       if (url.includes('/api/bot-browser/chub/search')) {
         const urlObj = new URL(url, window.location.origin);
-        const chubUrl = 'https://api.chub.ai/search' + urlObj.search;
+        const chubUrl = '/api/storage/chub/search' + urlObj.search;
         try { return await originalFetch(chubUrl); } catch (e) { console.warn("Chub search proxy failed", e); }
       } else if (url.includes('/api/bot-browser/chub/character/')) {
         const id = url.split('/character/')[1].split('?')[0];
-        const chubUrl = 'https://api.chub.ai/api/characters/' + id;
+        const chubUrl = '/api/storage/chub/character/' + id;
         try { return await originalFetch(chubUrl); } catch (e) { console.warn("Chub char proxy failed", e); }
       }
     }
@@ -802,6 +802,37 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 with open(target_path, "rb") as fh:
                     self.wfile.write(fh.read())
+            except Exception as e:
+                self._send_json(500, {"error": str(e)})
+            return True
+
+        if path == "/api/storage/chub/search" and method == "GET":
+            import urllib.request
+            import json
+            url = "https://api.chub.ai/search?" + query
+            try:
+                req = urllib.request.Request(url, headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'application/json'
+                })
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    self._send_json(200, json.loads(resp.read()))
+            except Exception as e:
+                self._send_json(500, {"error": str(e)})
+            return True
+
+        if path.startswith("/api/storage/chub/character/") and method == "GET":
+            import urllib.request
+            import json
+            char_id = path.split("/character/")[1]
+            url = "https://api.chub.ai/api/characters/" + char_id
+            try:
+                req = urllib.request.Request(url, headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'application/json'
+                })
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    self._send_json(200, json.loads(resp.read()))
             except Exception as e:
                 self._send_json(500, {"error": str(e)})
             return True

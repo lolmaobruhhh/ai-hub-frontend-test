@@ -360,7 +360,7 @@
           if (this.currentTab !== 'online') return;
           this.onlineSearching = true;
           try {
-            let url = `https://api.chub.ai/search?first=50`;
+            let url = `/api/storage/chub/search?first=50`;
             if (this.searchQuery.trim()) {
                url += `&search=${encodeURIComponent(this.searchQuery)}`;
             } else {
