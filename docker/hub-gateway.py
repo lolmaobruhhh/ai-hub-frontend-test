@@ -20,7 +20,8 @@ import urllib.request
 
 class ThreadPoolHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
-    executor = ThreadPoolExecutor(max_workers=64)
+    request_queue_size = 512
+    executor = ThreadPoolExecutor(max_workers=1024)
 
     def process_request(self, request, client_address):
         self.executor.submit(self.process_request_thread, request, client_address)
@@ -451,6 +452,7 @@ def resolve_route(
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    timeout = 15
     server_version = "hub-gateway/16"
 
     def log_message(self, fmt: str, *args) -> None:
@@ -773,7 +775,7 @@ class Handler(BaseHTTPRequestHandler):
 
         prefix = APP_PREFIXES.get(app, "")
         port = backend_port(app)
-        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=3600)
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=120)
         length = int(self.headers.get("Content-Length", "0") or "0")
         body = self.rfile.read(length) if length else None
 
