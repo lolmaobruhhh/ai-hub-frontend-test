@@ -20,6 +20,7 @@
       --primary: #7c5cff;
       --primary-2: #c084fc;
       --accent: #22d3ee;
+      --cat: #fb923c;
       --text: #f4f6fb;
       --text-muted: #9aa6c2;
       --border: rgba(255,255,255,0.08);
@@ -31,18 +32,11 @@
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
-
     html { scroll-behavior: smooth; }
     body {
-      font-family: var(--font-body);
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.55;
-      -webkit-font-smoothing: antialiased;
-      overflow-x: hidden;
-      min-height: 100vh;
+      font-family: var(--font-body); background: var(--bg); color: var(--text);
+      line-height: 1.55; -webkit-font-smoothing: antialiased; overflow-x: hidden; min-height: 100vh;
     }
-    /* Ambient background glows */
     body::before {
       content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
       background:
@@ -50,98 +44,54 @@
         radial-gradient(50vw 50vw at 100% 0%, rgba(34,211,238,0.12), transparent 55%),
         radial-gradient(40vw 40vw at 50% 120%, rgba(192,132,252,0.12), transparent 60%);
     }
-
     a { color: inherit; }
 
-    /* Navbar */
     .navbar {
-      position: sticky; top: 0; z-index: 50;
-      background: rgba(7,9,18,0.72); backdrop-filter: blur(16px);
-      border-bottom: 1px solid var(--border);
-      padding: 0.9rem 1.25rem;
+      position: sticky; top: 0; z-index: 50; background: rgba(7,9,18,0.72); backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border); padding: 0.9rem 1.25rem;
       display: flex; justify-content: space-between; align-items: center; gap: 1rem;
     }
-    .brand {
-      font-family: var(--font-heading); font-size: 1.15rem; font-weight: 800;
-      display: flex; align-items: center; gap: 0.6rem; text-decoration: none; color: #fff;
-    }
-    .brand .logo {
-      width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
-      background: linear-gradient(135deg, var(--primary), var(--primary-2));
-      box-shadow: 0 8px 20px -6px rgba(124,92,255,0.7);
-    }
+    .brand { font-family: var(--font-heading); font-size: 1.15rem; font-weight: 800; display: flex; align-items: center; gap: 0.6rem; text-decoration: none; color: #fff; }
+    .brand .logo { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: linear-gradient(135deg, var(--primary), var(--primary-2)); box-shadow: 0 8px 20px -6px rgba(124,92,255,0.7); }
     .brand .logo svg { width: 20px; height: 20px; color: #fff; }
     .brand small { display: block; font-family: var(--font-body); font-weight: 500; font-size: 0.7rem; color: var(--text-muted); letter-spacing: .3px; }
     .nav-actions { display: flex; gap: .5rem; align-items: center; }
-    .btn-nav {
-      text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--text-muted);
-      padding: 0.5rem 0.9rem; border-radius: 10px; background: rgba(255,255,255,0.05);
-      border: 1px solid var(--border); transition: .2s; cursor: pointer; display:inline-flex; align-items:center; gap:.4rem;
-    }
+    .btn-nav { text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--text-muted); padding: 0.5rem 0.9rem; border-radius: 10px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); transition: .2s; cursor: pointer; display:inline-flex; align-items:center; gap:.4rem; }
     .btn-nav:hover { background: rgba(255,255,255,0.1); color: #fff; border-color: var(--border-strong); }
 
     .container { max-width: 1500px; margin: 0 auto; padding: 2rem 1.25rem 5rem; }
-
-    /* Hero */
     .hero { text-align: center; margin: 1.5rem 0 2.25rem; }
-    .hero .eyebrow {
-      display: inline-flex; align-items: center; gap: .5rem; font-size: .75rem; font-weight: 600;
-      text-transform: uppercase; letter-spacing: 2px; color: var(--primary-2);
-      background: rgba(192,132,252,0.1); border: 1px solid rgba(192,132,252,0.25);
-      padding: .35rem .8rem; border-radius: 999px; margin-bottom: 1rem;
-    }
-    .hero h1 {
-      font-family: var(--font-heading); font-weight: 900; line-height: 1.05;
-      font-size: clamp(2.1rem, 6vw, 3.6rem); letter-spacing: -1px;
-      background: linear-gradient(120deg, #fff 30%, var(--primary-2) 70%, var(--accent));
-      -webkit-background-clip: text; background-clip: text; color: transparent;
-    }
+    .hero .eyebrow { display: inline-flex; align-items: center; gap: .5rem; font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 2px; color: var(--primary-2); background: rgba(192,132,252,0.1); border: 1px solid rgba(192,132,252,0.25); padding: .35rem .8rem; border-radius: 999px; margin-bottom: 1rem; }
+    .hero h1 { font-family: var(--font-heading); font-weight: 900; line-height: 1.05; font-size: clamp(2.1rem, 6vw, 3.6rem); letter-spacing: -1px; background: linear-gradient(120deg, #fff 30%, var(--primary-2) 70%, var(--accent)); -webkit-background-clip: text; background-clip: text; color: transparent; }
     .hero p { color: var(--text-muted); font-size: clamp(1rem,2.5vw,1.15rem); margin-top: .75rem; }
 
-    /* Controls */
-    .controls {
-      display: flex; flex-wrap: wrap; gap: .9rem; margin-bottom: 1.75rem; align-items: center;
-    }
+    .controls { display: flex; flex-wrap: wrap; gap: .9rem; margin-bottom: 1.75rem; align-items: center; }
     .search { flex: 1 1 320px; position: relative; }
-    .search input {
-      width: 100%; padding: 0.95rem 1rem 0.95rem 3rem; border-radius: 14px;
-      background: rgba(255,255,255,0.04); border: 1px solid var(--border); color: #fff;
-      font-family: var(--font-body); font-size: 1rem; transition: .2s;
-    }
+    .search input { width: 100%; padding: 0.95rem 1rem 0.95rem 3rem; border-radius: 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--border); color: #fff; font-family: var(--font-body); font-size: 1rem; transition: .2s; }
     .search input::placeholder { color: var(--text-muted); }
     .search input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 4px rgba(124,92,255,0.18); background: rgba(255,255,255,0.06); }
     .search .ico { position: absolute; left: 1rem; top: 50%; transform: translateY(-50%); color: var(--text-muted); width: 20px; height: 20px; }
     .search .hint { position:absolute; right: .8rem; top: 50%; transform: translateY(-50%); font-size:.7rem; color: var(--text-muted); border:1px solid var(--border); padding:.15rem .4rem; border-radius:6px; }
 
-    .tabs { display: flex; gap: .3rem; background: rgba(255,255,255,0.04); padding: .35rem; border-radius: 14px; border: 1px solid var(--border); }
-    .tab {
-      padding: .6rem 1.1rem; border-radius: 10px; border: none; background: transparent;
-      color: var(--text-muted); font-weight: 600; font-size: .9rem; cursor: pointer; transition: .2s;
-      display: inline-flex; align-items: center; gap: .45rem; white-space: nowrap;
-    }
+    .tabs { display: flex; gap: .3rem; background: rgba(255,255,255,0.04); padding: .35rem; border-radius: 14px; border: 1px solid var(--border); flex-wrap: wrap; }
+    .tab { padding: .6rem 1rem; border-radius: 10px; border: none; background: transparent; color: var(--text-muted); font-weight: 600; font-size: .9rem; cursor: pointer; transition: .2s; display: inline-flex; align-items: center; gap: .45rem; white-space: nowrap; }
     .tab:hover { color: #fff; }
     .tab.active { background: linear-gradient(135deg, var(--primary), var(--primary-2)); color: #fff; box-shadow: 0 8px 22px -10px rgba(124,92,255,0.9); }
     .tab .count { font-size: .72rem; opacity: .8; background: rgba(0,0,0,0.25); padding: .05rem .4rem; border-radius: 999px; }
-    .tab.online { color: var(--primary-2); }
-    .tab.online.active { color: #fff; }
+    .tab.src-chub { color: var(--primary-2); }
+    .tab.src-datacat { color: var(--cat); }
+    .tab.active.src-chub, .tab.active.src-datacat { color: #fff; }
+    .tab.active.src-datacat { background: linear-gradient(135deg, #fb923c, #f43f5e); box-shadow: 0 8px 22px -10px rgba(251,146,60,0.9); }
 
     .upload-btn { position: relative; overflow: hidden; }
     .upload-btn input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 
-    /* Grid */
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 1.25rem; }
     @media (max-width: 560px) { .grid { grid-template-columns: repeat(2, 1fr); gap: .8rem; } }
 
-    .card {
-      background: var(--surface); border: 1px solid var(--border); border-radius: 18px;
-      overflow: hidden; cursor: pointer; transition: transform .28s cubic-bezier(.2,.7,.3,1), box-shadow .28s, border-color .28s;
-      display: flex; flex-direction: column; aspect-ratio: 3/4.4; position: relative;
-    }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; overflow: hidden; cursor: pointer; transition: transform .28s cubic-bezier(.2,.7,.3,1), box-shadow .28s, border-color .28s; display: flex; flex-direction: column; aspect-ratio: 3/4.4; position: relative; }
     .card:hover { transform: translateY(-6px); border-color: var(--border-strong); box-shadow: var(--glow); }
-    .card::after {
-      content: ''; position: absolute; inset: 0; pointer-events: none;
-      background: linear-gradient(to top, rgba(5,7,14,0.96) 4%, rgba(5,7,14,0.45) 38%, transparent 68%);
-    }
+    .card::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(to top, rgba(5,7,14,0.96) 4%, rgba(5,7,14,0.45) 38%, transparent 68%); }
     .card-img { width: 100%; height: 100%; object-fit: cover; position: absolute; inset: 0; transition: transform .6s ease; background: var(--surface-2); }
     .card.is-json .card-img { object-fit: contain; padding: 2.6rem; opacity: .65; }
     .card:hover .card-img { transform: scale(1.06); }
@@ -152,8 +102,8 @@
     .badge.star { background: rgba(250,204,21,0.18); color: #fde68a; }
     .badge.kind { position:absolute; top:.7rem; left:.7rem; z-index:3; background: rgba(124,92,255,0.85); color:#fff; text-transform:uppercase; letter-spacing:.5px; font-size:.62rem; }
     .badge.kind.lore { background: rgba(34,211,238,0.85); color:#04222a; }
+    .badge.kind.cat { background: rgba(251,146,60,0.9); color:#2a1404; }
 
-    /* Empty / loader */
     .empty-state { grid-column: 1/-1; text-align: center; padding: 5rem 1rem; color: var(--text-muted); }
     .empty-state .em-ic { width:64px;height:64px;margin:0 auto 1rem;opacity:.5; }
     .loader-wrap { display: flex; justify-content: center; padding: 5rem; }
@@ -161,7 +111,6 @@
     @keyframes spin { to { transform: rotate(360deg); } }
     .load-more { display:flex; justify-content:center; margin-top: 2rem; }
 
-    /* Modal */
     .modal-backdrop { position: fixed; inset: 0; background: rgba(3,5,12,0.78); backdrop-filter: blur(10px); z-index: 100; display: flex; justify-content: center; align-items: center; padding: 2rem; animation: fade .2s ease; }
     @keyframes fade { from { opacity:0 } to { opacity:1 } }
     .modal { background: var(--bg-2); border: 1px solid var(--border-strong); border-radius: 22px; width: 100%; max-width: 1040px; max-height: 90vh; display: flex; overflow: hidden; box-shadow: var(--shadow); position: relative; }
@@ -182,6 +131,8 @@
     .btn { padding: .8rem 1.15rem; border-radius: 12px; font-weight: 700; font-size: .9rem; cursor: pointer; display: inline-flex; align-items: center; gap: .5rem; transition: .2s; border: none; font-family: var(--font-body); }
     .btn-primary { background: linear-gradient(135deg, var(--primary), var(--primary-2)); color: #fff; box-shadow: 0 10px 26px -12px rgba(124,92,255,0.9); }
     .btn-primary:hover { transform: translateY(-2px); filter: brightness(1.08); }
+    .btn-cat { background: linear-gradient(135deg, #fb923c, #f43f5e); color: #fff; box-shadow: 0 10px 26px -12px rgba(251,146,60,0.9); }
+    .btn-cat:hover { transform: translateY(-2px); filter: brightness(1.08); }
     .btn-secondary { background: rgba(255,255,255,0.05); color: #fff; border: 1px solid var(--border); }
     .btn-secondary:hover { background: rgba(255,255,255,0.1); }
     .btn-danger { background: rgba(239,68,68,0.12); color:#fca5a5; border:1px solid rgba(239,68,68,0.3); }
@@ -230,16 +181,16 @@
       <div class="hero">
         <span class="eyebrow">✦ Your synced collection</span>
         <h1>Character Library</h1>
-        <p>Browse your characters & lorebooks — or discover thousands more from Chub.</p>
+        <p>Browse your characters & lorebooks — or discover thousands more from Chub & DataCat.</p>
       </div>
 
       <div class="controls">
         <div class="search">
           <svg class="ico" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
           <input type="text" v-model="searchQuery"
-                 :placeholder="currentTab === 'online' ? 'Search Chub — e.g. Tifa, detective, sci-fi…' : 'Filter your library…'"
-                 @keyup.enter="onSearchEnter" @input="onLocalInput">
-          <span class="hint" v-if="currentTab==='online'">Enter ↵</span>
+                 :placeholder="isOnline ? (currentTab === 'datacat' ? 'Search DataCat (JanitorAI) — e.g. teacher…' : 'Search Chub — e.g. Tifa, detective…') : 'Filter your library…'"
+                 @keyup.enter="onSearchEnter">
+          <span class="hint" v-if="isOnline">Enter ↵</span>
         </div>
         <div class="tabs">
           <button class="tab" :class="{active: currentTab === 'characters'}" @click="setTab('characters')">
@@ -250,17 +201,16 @@
             <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a2 2 0 012-2h9l5 5v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5z"/></svg>
             Lorebooks <span class="count">{{ data.lorebooks.length }}</span>
           </button>
-          <button class="tab online" :class="{active: currentTab === 'online'}" @click="setTab('online')">
-            ✦ Discover
-          </button>
+          <button class="tab src-chub" :class="{active: currentTab === 'chub'}" @click="setTab('chub')">✦ Chub</button>
+          <button class="tab src-datacat" :class="{active: currentTab === 'datacat'}" @click="setTab('datacat')">🐱 DataCat</button>
         </div>
       </div>
 
       <div v-if="loading" class="loader-wrap"><div class="loader"></div></div>
 
       <div v-else>
-        <!-- Online (Chub) -->
-        <div v-if="currentTab === 'online'">
+        <!-- Online (Chub / DataCat) -->
+        <div v-if="isOnline">
           <div v-if="onlineSearching && onlineResults.length === 0" class="loader-wrap"><div class="loader"></div></div>
           <div v-else-if="onlineResults.length === 0" class="empty-state">
             <svg class="em-ic" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
@@ -268,15 +218,15 @@
           </div>
           <template v-else>
             <div class="grid">
-              <div class="card" v-for="node in onlineResults" :key="node.id" @click="openOnlineModal(node)">
-                <span class="badge kind">Chub</span>
-                <img class="card-img" :src="node.avatar_url" loading="lazy" @error="onImgError">
+              <div class="card" v-for="c in onlineResults" :key="c.source + ':' + c.id" @click="openOnlineModal(c)">
+                <span class="badge kind" :class="{cat: c.source==='datacat'}">{{ c.source === 'datacat' ? 'DataCat' : 'Chub' }}</span>
+                <img class="card-img" :src="c.avatarUrl" loading="lazy" @error="onImgError">
                 <div class="card-content">
                   <div class="card-meta">
-                    <span class="badge star">★ {{ formatNum(node.starCount) }}</span>
-                    <span class="badge">{{ formatNum(node.nTokens) }} tk</span>
+                    <span class="badge star" v-if="c.stars != null">★ {{ formatNum(c.stars) }}</span>
+                    <span class="badge" v-if="c.tokens">{{ formatNum(c.tokens) }} tk</span>
                   </div>
-                  <h3 class="card-title">{{ node.name }}</h3>
+                  <h3 class="card-title">{{ c.name }}</h3>
                 </div>
               </div>
             </div>
@@ -293,16 +243,14 @@
         <div v-else>
           <div v-if="filteredItems.length === 0" class="empty-state">
             <svg class="em-ic" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
-            <p>{{ searchQuery ? 'Nothing matches your filter.' : 'Nothing here yet — import some from Discover!' }}</p>
+            <p>{{ searchQuery ? 'Nothing matches your filter.' : 'Nothing here yet — import some from Chub or DataCat!' }}</p>
           </div>
           <div v-else class="grid">
             <div class="card" v-for="item in filteredItems" :key="item.path" :class="{'is-json': item.isJson}" @click="openModal(item)">
               <span class="badge kind" :class="{lore: item.isJson}">{{ item.isJson ? 'Lore' : 'Card' }}</span>
               <img class="card-img" :src="getImgUrl(item)" loading="lazy" @error="onImgError">
               <div class="card-content">
-                <div class="card-meta">
-                  <span class="badge">{{ formatSize(item.size) }}</span>
-                </div>
+                <div class="card-meta"><span class="badge">{{ formatSize(item.size) }}</span></div>
                 <h3 class="card-title">{{ item.displayName }}</h3>
               </div>
             </div>
@@ -325,24 +273,24 @@
           </div>
 
           <div class="stat-row" v-if="selected.isOnline">
-            <span class="stat">★ {{ formatNum(selected.starCount) }} stars</span>
-            <span class="stat">💬 {{ formatNum(selected.nChats) }} chats</span>
-            <span class="stat">⛃ {{ formatNum(selected.nTokens) }} tokens</span>
+            <span class="stat" v-if="selected.stars != null">★ {{ formatNum(selected.stars) }} stars</span>
+            <span class="stat" v-if="selected.tokens">⛃ {{ formatNum(selected.tokens) }} tokens</span>
+            <span class="stat">{{ selected.source === 'datacat' ? 'via DataCat · JanitorAI' : 'via Chub' }}</span>
           </div>
-          <div class="tags" v-if="selected.isOnline && selected.topics && selected.topics.length">
-            <span class="tag" v-for="t in selected.topics.slice(0,12)" :key="t">{{ t }}</span>
+          <div class="tags" v-if="selected.isOnline && selected.tags && selected.tags.length">
+            <span class="tag" v-for="t in selected.tags.slice(0,12)" :key="t">{{ t }}</span>
           </div>
 
           <div class="actions">
             <template v-if="selected.isOnline">
-              <button class="btn btn-primary" @click="importOnlineCard" :disabled="uploading">
+              <button class="btn" :class="selected.source === 'datacat' ? 'btn-cat' : 'btn-primary'" @click="importOnlineCard" :disabled="uploading">
                 <span v-if="uploading" class="loader" style="width:16px;height:16px;border-width:2px;"></span>
                 <svg v-else width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v12m0-12l-4 4m4-4l4 4M4 18v1a1 1 0 001 1h14a1 1 0 001-1v-1"/></svg>
                 {{ uploading ? 'Importing…' : 'Import to Hub' }}
               </button>
-              <a class="btn btn-secondary" :href="selected.externalUrl" target="_blank" rel="noopener">
+              <a class="btn btn-secondary" v-if="selected.externalUrl" :href="selected.externalUrl" target="_blank" rel="noopener">
                 <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5h5v5m0-5L10 14M5 7v12h12"/></svg>
-                View on Chub
+                View source
               </a>
             </template>
             <template v-else>
@@ -377,25 +325,85 @@
   <script>
     const { createApp } = Vue;
 
-    // Chub is fetched DIRECTLY from the browser. The hub gateway runs on a
-    // datacenter IP that Cloudflare blocks (403); the user's own browser IP is
-    // trusted, and Chub sends Access-Control-Allow-Origin:* so cross-origin
-    // reads are allowed. Avatars are <img> loads (no CORS needed).
+    // Chub is fetched directly from the browser (CORS:* + residential IP beats
+    // Cloudflare). DataCat has NO CORS + needs a session token, so it is proxied
+    // through the hub gateway (/api/storage/datacat/*); its avatars live on the
+    // JanitorAI CDN (CORS:*) and load/convert directly in the browser.
     const CHUB_API = 'https://api.chub.ai';
+    const ELLA_CDN = 'https://ella.janitorai.com/bot-avatars/';
     const PLACEHOLDER = 'data:image/svg+xml;utf8,' + encodeURIComponent(
       '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="#3a4561" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22h14a2 2 0 0 0 2-2V7.5L14.5 2H6a2 2 0 0 0-2 2v4"/><path d="M14 2v6h6"/></svg>'
     );
 
-    function titleCase(s) {
-      return s.replace(/\b([a-z])/g, (m, c) => c.toUpperCase());
-    }
-    // "hub_seraphina.png" -> "Seraphina", "hub_eldoria.json" -> "Eldoria"
+    function titleCase(s) { return s.replace(/\b([a-z])/g, (m, c) => c.toUpperCase()); }
     function cleanName(filename) {
       let n = (filename || '').replace(/\.(png|webp|json|charx|card)$/i, '');
-      n = n.replace(/^hub_/i, '');
-      n = n.replace(/^(st|marinara|lumiverse)_/i, '');
+      n = n.replace(/^hub_/i, '').replace(/^(st|marinara|lumiverse)_/i, '');
       n = n.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
       return titleCase(n) || filename;
+    }
+
+    // ── PNG character-card builder (no server image libs needed) ──
+    const CRC_TABLE = (() => {
+      const t = new Uint32Array(256);
+      for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); t[n] = c >>> 0; }
+      return t;
+    })();
+    function crc32(bytes) { let c = 0xFFFFFFFF; for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+    function utf8ToBase64(str) {
+      const bytes = new TextEncoder().encode(str);
+      let bin = ''; for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      return btoa(bin);
+    }
+    // Insert a tEXt chunk (keyword 'chara' = base64 V2 card) right after IHDR.
+    function pngEmbedChara(pngBytes, base64Text) {
+      const enc = new TextEncoder();
+      const payload = enc.encode('chara\0' + base64Text);
+      const type = enc.encode('tEXt');
+      const chunk = new Uint8Array(4 + 4 + payload.length + 4);
+      const dv = new DataView(chunk.buffer);
+      dv.setUint32(0, payload.length);
+      chunk.set(type, 4);
+      chunk.set(payload, 8);
+      const crcInput = new Uint8Array(type.length + payload.length);
+      crcInput.set(type, 0); crcInput.set(payload, type.length);
+      dv.setUint32(8 + payload.length, crc32(crcInput));
+      const insertPos = 33; // 8-byte sig + 25-byte IHDR chunk
+      const out = new Uint8Array(pngBytes.length + chunk.length);
+      out.set(pngBytes.subarray(0, insertPos), 0);
+      out.set(chunk, insertPos);
+      out.set(pngBytes.subarray(insertPos), insertPos + chunk.length);
+      return out;
+    }
+    // Draw a (possibly webp) image URL to a PNG blob via canvas. Falls back to a
+    // gradient placeholder if the image can't be loaded/decoded.
+    async function imageUrlToPngBytes(url, label) {
+      const drawPlaceholder = () => {
+        const cv = document.createElement('canvas'); cv.width = 512; cv.height = 768;
+        const ctx = cv.getContext('2d');
+        const g = ctx.createLinearGradient(0, 0, 512, 768);
+        g.addColorStop(0, '#7c5cff'); g.addColorStop(1, '#f43f5e');
+        ctx.fillStyle = g; ctx.fillRect(0, 0, 512, 768);
+        ctx.fillStyle = 'rgba(255,255,255,0.92)'; ctx.font = 'bold 40px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText((label || 'Character').slice(0, 16), 256, 384);
+        return cv;
+      };
+      const canvas = await new Promise((resolve) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          const cv = document.createElement('canvas');
+          cv.width = img.naturalWidth || 512; cv.height = img.naturalHeight || 768;
+          try { cv.getContext('2d').drawImage(img, 0, 0); resolve(cv); }
+          catch (e) { resolve(drawPlaceholder()); }
+        };
+        img.onerror = () => resolve(drawPlaceholder());
+        img.src = url;
+      });
+      const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+      if (!blob) throw new Error('canvas toBlob failed');
+      return new Uint8Array(await blob.arrayBuffer());
     }
 
     createApp({
@@ -407,7 +415,7 @@
           data: { characters: [], lorebooks: [] },
           onlineResults: [],
           onlineSearching: false,
-          onlinePage: 1,
+          onlinePage: 1,         // chub page / datacat offset-page
           onlineQuery: '',
           onlineHasMore: false,
           selected: null,
@@ -417,22 +425,20 @@
         };
       },
       computed: {
+        isOnline() { return this.currentTab === 'chub' || this.currentTab === 'datacat'; },
         filteredItems() {
-          if (this.currentTab === 'online') return [];
+          if (this.isOnline) return [];
           const items = this.data[this.currentTab] || [];
           const q = this.searchQuery.toLowerCase().trim();
           if (!q) return items;
           return items.filter(i =>
             (i.displayName && i.displayName.toLowerCase().includes(q)) ||
-            (i.metadataName && i.metadataName.toLowerCase().includes(q))
-          );
+            (i.metadataName && i.metadataName.toLowerCase().includes(q)));
         },
-        isModalJson() {
-          return this.selected && this.selected.isJson && !this.selected.isOnline;
-        },
+        isModalJson() { return this.selected && this.selected.isJson && !this.selected.isOnline; },
         modalImg() {
           if (!this.selected) return PLACEHOLDER;
-          if (this.selected.isOnline) return this.selected.cardImg || this.selected.avatar_url || PLACEHOLDER;
+          if (this.selected.isOnline) return this.selected.avatarUrl || PLACEHOLDER;
           return this.getImgUrl(this.selected);
         },
       },
@@ -440,75 +446,107 @@
         setTab(tab) {
           this.currentTab = tab;
           this.searchQuery = '';
-          if (tab === 'online' && this.onlineResults.length === 0) this.runOnlineSearch(true);
+          if (this.isOnline) { this.onlineResults = []; this.runOnlineSearch(true); }
         },
-        onLocalInput() { /* reactive filter via computed */ },
-        onSearchEnter() {
-          if (this.currentTab === 'online') this.runOnlineSearch(true);
+        onSearchEnter() { if (this.isOnline) this.runOnlineSearch(true); },
+
+        // ── Build a normalized card from each provider's raw object ──
+        normalizeChub(n) {
+          return {
+            source: 'chub', id: n.fullPath, name: n.name || 'Unnamed',
+            creator: 'by ' + (n.fullPath || '/').split('/')[0],
+            avatarUrl: n.avatar_url, tokens: n.nTokens, stars: n.starCount,
+            tags: n.topics || [], description: n.description, tagline: n.tagline,
+            downloadUrl: n.max_res_url || n.avatar_url,
+            externalUrl: 'https://chub.ai/characters/' + n.fullPath, raw: n,
+          };
         },
-        buildChubUrl() {
-          const q = this.onlineQuery.trim();
-          const p = new URLSearchParams({
-            first: '40', page: String(this.onlinePage),
-            nsfw: 'true', nsfl: 'true', include_forks: 'true', venus: 'false',
-            min_tokens: '50', search: q,
-          });
-          if (!q) p.set('sort', 'download_count'); // popular when just browsing
-          return `${CHUB_API}/search?${p.toString()}`;
+        normalizeDatacat(c) {
+          const av = c.avatar || '';
+          return {
+            source: 'datacat', id: c.characterId, name: c.name || c.chatName || 'Unnamed',
+            creator: c.creatorName ? ('by ' + c.creatorName) : '',
+            avatarUrl: av.startsWith('http') ? av : (av ? ELLA_CDN + av : PLACEHOLDER),
+            tokens: c.totalTokens || c.total_tokens, stars: null,
+            tags: c.tags || [], description: c.description || c.rawDescription,
+            externalUrl: c.creatorId ? ('https://janitorai.com/characters/' + c.characterId) : '',
+            raw: c,
+          };
         },
         async runOnlineSearch(reset) {
           if (reset) { this.onlinePage = 1; this.onlineQuery = this.searchQuery; this.onlineResults = []; }
           this.onlineSearching = true;
+          const source = this.currentTab;
           try {
-            const res = await fetch(this.buildChubUrl(), { headers: { Accept: 'application/json' } });
-            if (!res.ok) throw new Error('HTTP ' + res.status);
-            const json = await res.json();
-            const nodes = (json.data && json.data.nodes) || json.nodes || [];
-            this.onlineResults = reset ? nodes : this.onlineResults.concat(nodes);
-            this.onlineHasMore = !!(json.data && json.data.cursor) || nodes.length >= 40;
+            let cards = [];
+            if (source === 'chub') {
+              const q = this.onlineQuery.trim();
+              const p = new URLSearchParams({ first: '40', page: String(this.onlinePage), nsfw: 'true', nsfl: 'true', include_forks: 'true', venus: 'false', min_tokens: '50', search: q });
+              if (!q) p.set('sort', 'download_count');
+              const res = await fetch(`${CHUB_API}/search?${p}`, { headers: { Accept: 'application/json' } });
+              if (!res.ok) throw new Error('HTTP ' + res.status);
+              const j = await res.json();
+              const nodes = (j.data && j.data.nodes) || j.nodes || [];
+              cards = nodes.map(this.normalizeChub);
+              this.onlineHasMore = !!(j.data && j.data.cursor) || nodes.length >= 40;
+            } else {
+              const q = this.onlineQuery.trim();
+              const offset = (this.onlinePage - 1) * 40;
+              const p = new URLSearchParams({ limit: '40', offset: String(offset), min_tokens: '200' });
+              if (q) p.set('q', q);
+              const res = await fetch(`/api/storage/datacat/search?${p}`, { headers: { Accept: 'application/json' } });
+              if (!res.ok) throw new Error('HTTP ' + res.status);
+              const j = await res.json();
+              const chars = j.characters || [];
+              cards = chars.map(this.normalizeDatacat);
+              this.onlineHasMore = !!j.hasMore;
+            }
+            this.onlineResults = reset ? cards : this.onlineResults.concat(cards);
           } catch (e) {
             this.onlineHasMore = false;
-            this.showToast('Could not reach Chub. Check your connection and retry.', true);
+            this.showToast(`Could not reach ${source === 'datacat' ? 'DataCat' : 'Chub'}. Try again.`, true);
           } finally {
             this.onlineSearching = false;
           }
         },
         loadMoreOnline() { this.onlinePage++; this.runOnlineSearch(false); },
-        openOnlineModal(node) {
-          this.selected = {
-            ...node,
-            isOnline: true,
-            isJson: false,
-            metadataName: node.name,
-            metadataCreator: 'by ' + (node.fullPath || '/').split('/')[0],
-            cardImg: node.max_res_url || node.avatar_url,
-            externalUrl: 'https://chub.ai/characters/' + node.fullPath,
-          };
+        openOnlineModal(card) {
+          this.selected = { ...card, isOnline: true, isJson: false, metadataName: card.name, metadataCreator: card.creator };
           document.body.style.overflow = 'hidden';
         },
         async importOnlineCard() {
           if (!this.selected || this.uploading) return;
           this.uploading = true;
           try {
-            // chara_card_v2.png carries the embedded V2 character data.
-            const src = this.selected.max_res_url || this.selected.avatar_url;
-            const imgRes = await fetch(src);
-            if (!imgRes.ok) throw new Error('image ' + imgRes.status);
-            const blob = await imgRes.blob();
+            const safe = (this.selected.name || 'character').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'character';
+            let pngBytes;
+            if (this.selected.source === 'chub') {
+              // Chub serves a ready PNG that already embeds the V2 card.
+              const r = await fetch(this.selected.downloadUrl);
+              if (!r.ok) throw new Error('image ' + r.status);
+              pngBytes = new Uint8Array(await (await r.blob()).arrayBuffer());
+            } else {
+              // DataCat: fetch the V2 card JSON via gateway, render the avatar to
+              // a PNG client-side, and embed the card as a 'chara' tEXt chunk.
+              const dl = await fetch(`/api/storage/datacat/download/${encodeURIComponent(this.selected.id)}`);
+              if (!dl.ok) throw new Error('card ' + dl.status);
+              const j = await dl.json();
+              const card = (j && j.data) ? { spec: j.spec || 'chara_card_v2', spec_version: j.spec_version || '2.0', data: j.data } : j;
+              const avatarUrl = (card.data && card.data.avatar) || this.selected.avatarUrl;
+              const base = await imageUrlToPngBytes(avatarUrl, this.selected.name);
+              pngBytes = pngEmbedChara(base, utf8ToBase64(JSON.stringify(card)));
+            }
             const fd = new FormData();
-            const fname = (this.selected.name || 'character').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') + '.png';
-            fd.append('file', blob, fname);
+            fd.append('file', new Blob([pngBytes], { type: 'image/png' }), safe + '.png');
             const up = await fetch('/api/storage/upload', { method: 'POST', body: fd });
             const result = await up.json();
             if (result.success) {
               this.showToast('Imported! It will appear in your library shortly.');
               this.closeModal();
               this.fetchData();
-            } else {
-              this.showToast(result.error || 'Import failed.', true);
-            }
+            } else { this.showToast(result.error || 'Import failed.', true); }
           } catch (e) {
-            this.showToast('Import failed — could not fetch the card image.', true);
+            this.showToast('Import failed — ' + (e.message || 'could not fetch the card.'), true);
           } finally {
             this.uploading = false;
           }
@@ -526,29 +564,19 @@
                   item.metadataName = spec.name || null;
                   item.metadataCreator = spec.creator ? ('by ' + spec.creator) : null;
                 }
-                // Display name: prefer embedded name, else cleaned filename
                 item.displayName = (item.metadataName && item.metadataName.trim())
-                  ? item.metadataName.trim()
-                  : cleanName(item.name);
-                // Dedup by clean key so "Eldoria.json" + "hub_eldoria_json.json"
-                // don't both show. Prefer canonical hub_ file / smaller name.
+                  ? item.metadataName.trim() : cleanName(item.name);
                 const key = item.displayName.toLowerCase();
                 const prev = seen.get(key);
-                if (!prev) { seen.set(key, item); }
-                else {
-                  const better = item.name.startsWith('hub_') && !/_json\.json$/i.test(item.name);
-                  if (better) seen.set(key, item);
-                }
+                if (!prev) seen.set(key, item);
+                else if (item.name.startsWith('hub_') && !/_json\.json$/i.test(item.name)) seen.set(key, item);
               });
-              json[type] = Array.from(seen.values()).sort((a, b) =>
-                a.displayName.localeCompare(b.displayName));
+              json[type] = Array.from(seen.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
             }
             this.data = json;
           } catch (e) {
             this.showToast('Failed to load your library.', true);
-          } finally {
-            this.loading = false;
-          }
+          } finally { this.loading = false; }
         },
         async handleUpload(ev) {
           const files = Array.from(ev.target.files || []);
@@ -556,30 +584,22 @@
           let ok = 0;
           for (const f of files) {
             try {
-              const fd = new FormData();
-              fd.append('file', f, f.name);
-              const res = await fetch('/api/storage/upload', { method: 'POST', body: fd });
-              const r = await res.json();
+              const fd = new FormData(); fd.append('file', f, f.name);
+              const r = await (await fetch('/api/storage/upload', { method: 'POST', body: fd })).json();
               if (r.success) ok++;
-            } catch (e) { /* ignore individual */ }
+            } catch (e) {}
           }
           ev.target.value = '';
           this.showToast(ok ? `Uploaded ${ok} file${ok>1?'s':''}.` : 'Upload failed.', !ok);
           if (ok) this.fetchData();
         },
         getImgUrl(item) {
-          if (!item) return PLACEHOLDER;
-          if (item.isJson) return PLACEHOLDER;
+          if (!item || item.isJson) return PLACEHOLDER;
           return `/api/storage/download?path=${encodeURIComponent(item.path)}`;
         },
         onImgError(e) { e.target.src = PLACEHOLDER; },
         formatSize(b) { return b > 1048576 ? (b/1048576).toFixed(1)+' MB' : (b/1024).toFixed(0)+' KB'; },
-        formatNum(n) {
-          n = Number(n) || 0;
-          if (n >= 1e6) return (n/1e6).toFixed(1)+'M';
-          if (n >= 1e3) return (n/1e3).toFixed(1)+'k';
-          return String(n);
-        },
+        formatNum(n) { n = Number(n) || 0; if (n >= 1e6) return (n/1e6).toFixed(1)+'M'; if (n >= 1e3) return (n/1e3).toFixed(1)+'k'; return String(n); },
         openModal(item) { this.selected = item; document.body.style.overflow = 'hidden'; },
         closeModal() { this.selected = null; document.body.style.overflow = ''; },
         downloadSelected() {
@@ -594,12 +614,9 @@
           if (!this.selected || this.uploading) return;
           this.uploading = true;
           try {
-            const res = await fetch(`/api/storage/catbox?path=${encodeURIComponent(this.selected.path)}`, { method: 'POST' });
-            const data = await res.json();
-            if (data.url) {
-              try { await navigator.clipboard.writeText(data.url); } catch (_) {}
-              this.showToast('Link copied to clipboard!');
-            } else { this.showToast(data.error || 'Upload failed', true); }
+            const data = await (await fetch(`/api/storage/catbox?path=${encodeURIComponent(this.selected.path)}`, { method: 'POST' })).json();
+            if (data.url) { try { await navigator.clipboard.writeText(data.url); } catch (_) {} this.showToast('Link copied to clipboard!'); }
+            else this.showToast(data.error || 'Upload failed', true);
           } catch (e) { this.showToast('Upload error: connection failed', true); }
           finally { this.uploading = false; }
         },
@@ -610,13 +627,8 @@
           try {
             const res = await fetch(`/api/storage/delete?path=${encodeURIComponent(this.selected.path)}`, { method: 'POST' });
             const data = await res.json().catch(() => ({}));
-            if (res.ok && data.success !== false) {
-              this.showToast('Deleted.');
-              this.closeModal();
-              this.fetchData();
-            } else {
-              this.showToast(data.error || 'Delete not supported on this server.', true);
-            }
+            if (res.ok && data.success !== false) { this.showToast('Deleted.'); this.closeModal(); this.fetchData(); }
+            else this.showToast(data.error || 'Delete not supported on this server.', true);
           } catch (e) { this.showToast('Delete failed.', true); }
           finally { this.uploading = false; }
         },
@@ -626,11 +638,10 @@
             let md = '';
             if (item.tagline) md += `*${item.tagline}*\n\n`;
             if (item.description) md += `### Description\n${item.description}\n`;
-            return marked.parse(md || '*No description provided on Chub.*');
+            return marked.parse(md || '*No description provided.*');
           }
           if (!item.metadata) {
-            return item.isJson
-              ? '<p>No readable content found in this file.</p>'
+            return item.isJson ? '<p>No readable content found in this file.</p>'
               : '<p>No embedded character data. This image may rely on a separate .json file.</p>';
           }
           const spec = item.metadata.data || item.metadata;

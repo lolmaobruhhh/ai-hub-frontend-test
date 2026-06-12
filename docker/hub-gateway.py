@@ -335,6 +335,91 @@ def build_chub_search_url(query: str) -> str:
     return "https://api.chub.ai/search?" + urlencode(out)
 
 
+# ── DataCat (datacat.run) — JanitorAI character aggregator ─────────────────
+# DataCat exposes a clean REST API (search + downloadable V2 cards) but, unlike
+# Chub, sends NO `Access-Control-Allow-Origin`, so the browser cannot call it
+# cross-origin. It also requires a session token and Origin/Referer headers the
+# browser can't forge. So we proxy it server-side. Unlike api.chub.ai, DataCat
+# is not behind aggressive Cloudflare bot-mitigation and serves datacenter IPs,
+# so the gateway can reach it. Avatars live on ella.janitorai.com (CORS:*) and
+# are loaded directly by the browser — not proxied here.
+DATACAT_BASE = "https://datacat.run"
+DATACAT_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+_datacat_token = {"value": "", "ts": 0.0}
+_datacat_lock = threading.Lock()
+
+
+def _datacat_mint_token() -> str:
+    import uuid
+    body = json.dumps({"deviceToken": str(uuid.uuid4())}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{DATACAT_BASE}/api/liberator/identify",
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": DATACAT_UA,
+            "Origin": DATACAT_BASE,
+            "Referer": DATACAT_BASE + "/",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        data = json.loads(resp.read())
+    token = data.get("sessionToken")
+    if not token:
+        raise RuntimeError("datacat: response missing sessionToken")
+    return token
+
+
+def datacat_token(force: bool = False) -> str:
+    import time
+    with _datacat_lock:
+        if (not force and _datacat_token["value"]
+                and time.time() - _datacat_token["ts"] < 1800):
+            return _datacat_token["value"]
+        token = _datacat_mint_token()
+        _datacat_token["value"] = token
+        _datacat_token["ts"] = time.time()
+        return token
+
+
+def datacat_get(path: str) -> tuple[int, bytes]:
+    """GET a DataCat API path with the cached session token, decompressing the
+    body and re-minting the token once on a 401. Returns (status, body)."""
+    def _do(token: str) -> tuple[int, bytes]:
+        req = urllib.request.Request(
+            f"{DATACAT_BASE}{path}",
+            headers={
+                "Accept": "application/json",
+                "Accept-Encoding": "gzip, deflate",
+                "User-Agent": DATACAT_UA,
+                "Origin": DATACAT_BASE,
+                "Referer": DATACAT_BASE + "/",
+                "X-Session-Token": token,
+            },
+        )
+        try:
+            resp = urllib.request.urlopen(req, timeout=25)
+            status = 200
+        except urllib.error.HTTPError as exc:
+            resp = exc
+            status = exc.code
+        with resp:
+            raw = resp.read()
+            enc = resp.headers.get("Content-Encoding")
+        body, _ = decompress_body(raw, enc)
+        return status, body
+
+    status, body = _do(datacat_token())
+    if status == 401:
+        status, body = _do(datacat_token(force=True))
+    return status, body
+
+
 def fix_base_href(text: str, prefix: str) -> str:
     tag = f'<base href="{prefix}/">'
     if re.search(r"<base\s", text, re.I):
@@ -986,6 +1071,39 @@ class Handler(BaseHTTPRequestHandler):
         if (path.startswith("/api/storage/chub/download/") or path.startswith("/apps/marinara/api/bot-browser/chub/download/")) and method == "GET":
             char_id = path.split("/download/", 1)[1]
             self._redirect(f"https://avatars.charhub.io/avatars/{char_id}/chara_card_v2.png")
+            return True
+
+        if path == "/api/storage/datacat/search" and method == "GET":
+            from urllib.parse import urlencode, quote
+            qs = parse_qs(query)
+            params = {
+                "limit": qs.get("limit", ["48"])[0],
+                "offset": qs.get("offset", ["0"])[0],
+                "summary": "1",
+                "minTotalTokens": qs.get("min_tokens", ["200"])[0],
+            }
+            qstr = urlencode(params)
+            q = (qs.get("q", [""])[0] or qs.get("search", [""])[0]).strip()
+            if q:
+                qstr += "&search=" + quote(q)
+            try:
+                status, body = datacat_get(f"/api/characters/recent-public?{qstr}")
+                self._send_bytes(status, body, "application/json")
+            except Exception as e:
+                self._send_json(502, {"error": f"datacat unreachable: {e}"})
+            return True
+
+        if path.startswith("/api/storage/datacat/download/") and method == "GET":
+            from urllib.parse import quote
+            import time
+            cid = path.split("/download/", 1)[1]
+            try:
+                status, body = datacat_get(
+                    f"/api/characters/{quote(cid, safe='')}/download?t={int(time.time())}"
+                )
+                self._send_bytes(status, body, "application/json")
+            except Exception as e:
+                self._send_json(502, {"error": f"datacat download failed: {e}"})
             return True
 
         if path == "/api/storage/catbox" and method == "POST":
