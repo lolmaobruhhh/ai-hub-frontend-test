@@ -175,6 +175,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    ThreadingHTTPServer.request_queue_size = 512
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     print(f"[hub-api] listening on 127.0.0.1:{PORT}", flush=True)
     server.serve_forever()

@@ -52,6 +52,11 @@ ENV NODE_ENV=production
 ENV TRUST_ANY_ORIGIN=true
 ENV FORWARDED_PROTO=https
 
+# Global Space Protection Password (Basic Auth user: admin)
+ENV GLOBAL_PASSWORD=admin
+# Lumiverse Owner Password
+ENV OWNER_PASSWORD=admin123
+
 EXPOSE 7860
 
 CMD ["bash", "/opt/hub/docker/start-hf.sh"]

@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shared Storage Manager</title>
+  <link rel="icon" href="/hub/favicon.ico" type="image/x-icon">
+  <style>
+    :root {
+      --bg: #0f1117;
+      --card: #1a1f2e;
+      --card-hover: #23293b;
+      --accent: #ff6b4a;
+      --accent-hover: #ff856b;
+      --green: #4ecdc4;
+      --text: #e8ecf4;
+      --muted: #8b95a8;
+      --border: #2a3348;
+      --font: 'Inter', system-ui, -apple-system, sans-serif;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--font);
+      background: radial-gradient(circle at top right, #1b2236, var(--bg));
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem;
+    }
+    main { width: min(1000px, 100%); }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2rem;
+    }
+    h1 { margin: 0; font-size: 2rem; font-weight: 700; letter-spacing: -0.5px; }
+    .back-btn {
+      color: var(--muted);
+      text-decoration: none;
+      font-weight: 500;
+      transition: color 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .back-btn:hover { color: var(--text); }
+    
+    .search-bar {
+      width: 100%;
+      margin-bottom: 2rem;
+      position: relative;
+    }
+    .search-bar input {
+      width: 100%;
+      padding: 1rem 1.5rem;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(26, 31, 46, 0.6);
+      backdrop-filter: blur(10px);
+      color: var(--text);
+      font-size: 1rem;
+      transition: all 0.2s ease;
+      box-sizing: border-box;
+      outline: none;
+    }
+    .search-bar input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(255, 107, 74, 0.1);
+    }
+    
+    .tabs {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .tab {
+      padding: 0.6rem 1.2rem;
+      border-radius: 8px;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+    .tab.active {
+      background: var(--card);
+      border-color: var(--accent);
+      color: var(--text);
+    }
+    
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1.5rem;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.5rem;
+      transition: transform 0.2s, box-shadow 0.2s;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+      border-color: var(--accent);
+    }
+    .card-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin: 0;
+      word-break: break-word;
+    }
+    .card-meta {
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .card-actions {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: auto;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+    }
+    .btn {
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      border: none;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: all 0.2s;
+      flex: 1;
+      text-align: center;
+    }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-secondary { background: var(--border); color: var(--text); }
+    .btn-secondary:hover { background: #3a4561; }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(4px);
+      display: flex; justify-content: center; align-items: center;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.2s;
+      z-index: 100;
+    }
+    .modal-overlay.active { opacity: 1; pointer-events: auto; }
+    .modal {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      width: min(500px, 90%);
+      padding: 2rem;
+      transform: translateY(20px);
+      transition: transform 0.2s;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+    }
+    .modal-overlay.active .modal { transform: translateY(0); }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
+    .modal-close { background: none; border: none; color: var(--muted); font-size: 1.5rem; cursor: pointer; }
+    .modal-close:hover { color: var(--text); }
+    
+    .export-option {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1rem; border-radius: 10px; background: var(--card);
+      border: 1px solid var(--border); margin-bottom: 1rem;
+      transition: border-color 0.2s;
+    }
+    .export-option:hover { border-color: var(--accent); }
+    
+    /* Loading Spinner */
+    .loader {
+      border: 3px solid rgba(255,255,255,0.1);
+      border-top-color: var(--accent);
+      border-radius: 50%; width: 24px; height: 24px;
+      animation: spin 1s linear infinite; margin: 2rem auto;
+    }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+    .toast {
+      position: fixed; bottom: 20px; right: 20px;
+      background: var(--green); color: #000;
+      padding: 1rem 1.5rem; border-radius: 8px; font-weight: 600;
+      transform: translateY(100px); opacity: 0; transition: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+      z-index: 1000;
+    }
+    .toast.show { transform: translateY(0); opacity: 1; }
+    .toast.error { background: var(--red); color: white; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Storage Manager</h1>
+      <a href="/hub" class="back-btn">← Back to Hub</a>
+    </header>
+
+    <div class="search-bar">
+      <input type="text" id="searchInput" placeholder="Search characters and lorebooks..." oninput="filterItems()">
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" onclick="setTab('characters')" id="tab-characters">Characters (<span id="count-chars">0</span>)</button>
+      <button class="tab" onclick="setTab('lorebooks')" id="tab-lorebooks">Lorebooks (<span id="count-lore">0</span>)</button>
+    </div>
+
+    <div id="loader" class="loader"></div>
+    <div class="grid" id="grid"></div>
+  </main>
+
+  <div class="modal-overlay" id="exportModal" onclick="closeModal(event)">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 style="margin:0" id="modalTitle">Export Options</h2>
+        <button class="modal-close" onclick="document.getElementById('exportModal').classList.remove('active')">&times;</button>
+      </div>
+      <p style="color:var(--muted); margin-top:-0.5rem; margin-bottom:1.5rem;" id="modalSubtitle"></p>
+      
+      <div class="export-option">
+        <div>
+          <strong style="display:block; margin-bottom:0.25rem;">Save Locally</strong>
+          <span style="font-size:0.85rem; color:var(--muted);">Download file to your device</span>
+        </div>
+        <button class="btn btn-primary" style="flex:0" onclick="exportLocal()">Download</button>
+      </div>
+
+      <div class="export-option">
+        <div>
+          <strong style="display:block; margin-bottom:0.25rem;">Upload to Catbox.moe</strong>
+          <span style="font-size:0.85rem; color:var(--muted);">Get a public, shareable link</span>
+        </div>
+        <button class="btn btn-secondary" style="flex:0" id="catboxBtn" onclick="exportCatbox()">Upload</button>
+      </div>
+
+      <div class="export-option" style="opacity: 0.6;">
+        <div>
+          <strong style="display:block; margin-bottom:0.25rem;">Google Drive (Coming Soon)</strong>
+          <span style="font-size:0.85rem; color:var(--muted);">Requires OAuth setup</span>
+        </div>
+        <button class="btn btn-secondary" style="flex:0" disabled>Setup</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast">Action successful!</div>
+
+  <script>
+    let storageData = { characters: [], lorebooks: [] };
+    let currentTab = 'characters';
+    let selectedItem = null;
+
+    async function loadData() {
+      try {
+        const res = await fetch('/api/storage/list');
+        storageData = await res.json();
+        document.getElementById('count-chars').textContent = storageData.characters.length;
+        document.getElementById('count-lore').textContent = storageData.lorebooks.length;
+        document.getElementById('loader').style.display = 'none';
+        renderGrid();
+      } catch (e) {
+        showToast('Failed to load storage data', true);
+      }
+    }
+
+    function setTab(tab) {
+      currentTab = tab;
+      document.getElementById('tab-characters').classList.toggle('active', tab === 'characters');
+      document.getElementById('tab-lorebooks').classList.toggle('active', tab === 'lorebooks');
+      renderGrid();
+    }
+
+    function filterItems() {
+      renderGrid();
+    }
+
+    function renderGrid() {
+      const grid = document.getElementById('grid');
+      grid.innerHTML = '';
+      const query = document.getElementById('searchInput').value.toLowerCase();
+      const items = storageData[currentTab] || [];
+      
+      const filtered = items.filter(item => item.name.toLowerCase().includes(query));
+      
+      if (filtered.length === 0) {
+        grid.innerHTML = `<div style="color:var(--muted); text-align:center; grid-column: 1/-1; padding: 2rem;">No items found.</div>`;
+        return;
+      }
+
+      filtered.forEach(item => {
+        const div = document.createElement('div');
+        div.className = 'card';
+        div.innerHTML = `
+          <div>
+            <h3 class="card-title">${item.name}</h3>
+            <div class="card-meta">Size: ${(item.size / 1024).toFixed(1)} KB</div>
+            <div class="card-meta">Modified: ${new Date(item.mtime * 1000).toLocaleDateString()}</div>
+          </div>
+          <div class="card-actions">
+            <button class="btn btn-secondary" onclick="showDetails('${item.name}')">Details</button>
+            <button class="btn btn-primary" onclick="openExport('${item.name}', '${item.path}', '${currentTab}')">Export</button>
+          </div>
+        `;
+        grid.appendChild(div);
+      });
+    }
+
+    function showDetails(name) {
+      alert("Details view for " + name + "\\n\\n(You can expand this to fetch and parse character JSON if needed!)");
+    }
+
+    function openExport(name, path, type) {
+      selectedItem = { name, path, type };
+      document.getElementById('modalTitle').textContent = `Export: ${name}`;
+      document.getElementById('modalSubtitle').textContent = `Select an export destination.`;
+      document.getElementById('exportModal').classList.add('active');
+    }
+
+    function closeModal(e) {
+      if (e.target.id === 'exportModal') {
+        e.target.classList.remove('active');
+      }
+    }
+
+    function exportLocal() {
+      if (!selectedItem) return;
+      const link = document.createElement('a');
+      link.href = `/api/storage/download?path=${encodeURIComponent(selectedItem.path)}`;
+      link.download = selectedItem.name;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      showToast('Download started!');
+      document.getElementById('exportModal').classList.remove('active');
+    }
+
+    async function exportCatbox() {
+      if (!selectedItem) return;
+      const btn = document.getElementById('catboxBtn');
+      btn.textContent = 'Uploading...';
+      btn.disabled = true;
+      try {
+        const res = await fetch(`/api/storage/catbox?path=${encodeURIComponent(selectedItem.path)}`, { method: 'POST' });
+        const data = await res.json();
+        if (data.url) {
+          navigator.clipboard.writeText(data.url);
+          showToast('Uploaded! Link copied to clipboard.');
+          document.getElementById('exportModal').classList.remove('active');
+        } else {
+          showToast(data.error || 'Upload failed', true);
+        }
+      } catch (e) {
+        showToast('Upload error', true);
+      }
+      btn.textContent = 'Upload';
+      btn.disabled = false;
+    }
+
+    function showToast(msg, isError = false) {
+      const toast = document.getElementById('toast');
+      toast.textContent = msg;
+      toast.className = 'toast ' + (isError ? 'error show' : 'show');
+      setTimeout(() => toast.classList.remove('show'), 3000);
+    }
+
+    loadData();
+  </script>
+</body>
+</html>

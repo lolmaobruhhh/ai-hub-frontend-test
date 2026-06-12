@@ -13,7 +13,8 @@ import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
+import urllib.request
 
 DATA_ROOT = Path(os.environ.get("DATA_ROOT", "/data"))
 PUBLIC = Path("/opt/hub/public")
@@ -620,6 +621,78 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(500, {"ok": False, "error": str(exc)})
             return True
 
+        if path in {"/storage", "/storage/", "/api/storage", "/api/storage/"} and method == "GET":
+            self._send_public_file("storage.html", "text/html; charset=utf-8")
+            return True
+
+        if path == "/api/storage/list" and method == "GET":
+            shared_dir = DATA_ROOT / "shared"
+            chars = []
+            lores = []
+            for t_dir, lst in [("characters", chars), ("lorebooks", lores)]:
+                d = shared_dir / t_dir
+                if d.is_dir():
+                    for f in d.iterdir():
+                        if f.is_file():
+                            st = f.stat()
+                            lst.append({"name": f.name, "path": str(f.resolve()), "size": st.st_size, "mtime": st.st_mtime})
+            self._send_json(200, {"characters": chars, "lorebooks": lores})
+            return True
+
+        if path == "/api/storage/download" and method == "GET":
+            qs = parse_qs(query)
+            target = qs.get("path", [""])[0]
+            if not target:
+                self._send_json(400, {"error": "path required"})
+                return True
+            try:
+                target_path = Path(target).resolve()
+                shared_dir = (DATA_ROOT / "shared").resolve()
+                if not str(target_path).startswith(str(shared_dir)) or not target_path.is_file():
+                    self._send_json(403, {"error": "Invalid path"})
+                    return True
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Disposition", f'attachment; filename="{target_path.name}"')
+                self.send_header("Content-Length", str(target_path.stat().st_size))
+                self.end_headers()
+                with open(target_path, "rb") as fh:
+                    self.wfile.write(fh.read())
+            except Exception as e:
+                self._send_json(500, {"error": str(e)})
+            return True
+
+        if path == "/api/storage/catbox" and method == "POST":
+            qs = parse_qs(query)
+            target = qs.get("path", [""])[0]
+            if not target:
+                self._send_json(400, {"error": "path required"})
+                return True
+            try:
+                target_path = Path(target).resolve()
+                shared_dir = (DATA_ROOT / "shared").resolve()
+                if not str(target_path).startswith(str(shared_dir)) or not target_path.is_file():
+                    self._send_json(403, {"error": "Invalid path"})
+                    return True
+                
+                import uuid
+                boundary = uuid.uuid4().hex
+                body = []
+                body.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"reqtype\"\r\n\r\nfileupload\r\n".encode())
+                body.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"fileToUpload\"; filename=\"{target_path.name}\"\r\nContent-Type: application/octet-stream\r\n\r\n".encode())
+                with open(target_path, "rb") as fh:
+                    body.append(fh.read())
+                body.append(f"\r\n--{boundary}--\r\n".encode())
+                data = b"".join(body)
+                
+                req = urllib.request.Request("https://catbox.moe/user/api.php", data=data, headers={"Content-Type": f"multipart/form-data; boundary={boundary}"}, method="POST")
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    catbox_url = resp.read().decode("utf-8").strip()
+                    self._send_json(200, {"url": catbox_url})
+            except Exception as e:
+                self._send_json(500, {"error": str(e)})
+            return True
+
         if path == "/hub/favicon.ico" and method == "GET":
             self._send_public_file("favicon.ico", "image/x-icon")
             return True
@@ -789,6 +862,17 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if not self.parse_request():
                 return
+
+            global_pwd = os.environ.get("GLOBAL_PASSWORD")
+            if global_pwd:
+                import base64
+                expected = f"Basic {base64.b64encode(f'admin:{global_pwd}'.encode()).decode()}"
+                if self.headers.get("Authorization") != expected:
+                    self.send_response(401)
+                    self.send_header("WWW-Authenticate", 'Basic realm="AI Hub"')
+                    self.end_headers()
+                    self.wfile.write(b"Unauthorized")
+                    return
 
             if self._handle_hub_route(self.command):
                 return

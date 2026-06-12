@@ -981,6 +981,12 @@ def sync_shared_symlinks_to_st(state: dict) -> int:
         target_name = f"{safe_name(name)}.png"
         card_key = name.strip().lower()
         if card_key in existing_names:
+            target = ST_CHARS / target_name
+            if not target.exists() and not target.is_symlink():
+                # Name exists in ST under a different filename. Skip creating duplicate.
+                state["characters"][f"st_link:{target_name}"] = file_sig(path)
+                continue
+            
             st_key = f"st_link:{target_name}"
             if state["characters"].get(st_key) == file_sig(path):
                 continue
