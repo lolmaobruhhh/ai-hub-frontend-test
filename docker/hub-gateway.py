@@ -806,10 +806,29 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(500, {"error": str(e)})
             return True
 
-        if path == "/api/storage/chub/search" and method == "GET":
+        if path in ("/api/storage/chub/search", "/apps/marinara/api/bot-browser/chub/search") and method == "GET":
             import urllib.request
             import json
-            url = "https://api.chub.ai/search?" + query
+            from urllib.parse import parse_qs, urlencode
+            
+            qs = parse_qs(query)
+            out_q = {}
+            if "search" in qs:
+                out_q["search"] = qs["search"][0]
+            elif "q" in qs:
+                out_q["search"] = qs["q"][0]
+            else:
+                out_q["search"] = ""
+                
+            out_q["first"] = qs.get("first", ["48"])[0]
+            out_q["page"] = qs.get("page", ["1"])[0]
+            out_q["sort"] = qs.get("sort", ["download_count"])[0]
+            if out_q["sort"] == "downloads":
+                out_q["sort"] = "download_count"
+            out_q["nsfw"] = qs.get("nsfw", ["true"])[0]
+            out_q["nsfl"] = out_q["nsfw"]
+            
+            url = "https://api.chub.ai/search?" + urlencode(out_q)
             try:
                 req = urllib.request.Request(url, headers={
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -821,11 +840,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(500, {"error": str(e)})
             return True
 
-        if path.startswith("/api/storage/chub/character/") and method == "GET":
+        if (path.startswith("/api/storage/chub/character/") or path.startswith("/apps/marinara/api/bot-browser/chub/character/")) and method == "GET":
             import urllib.request
             import json
             char_id = path.split("/character/")[1]
-            url = "https://api.chub.ai/api/characters/" + char_id
+            url = f"https://api.chub.ai/api/characters/{char_id}?full=true"
             try:
                 req = urllib.request.Request(url, headers={
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',

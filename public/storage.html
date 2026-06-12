@@ -364,7 +364,7 @@
             if (this.searchQuery.trim()) {
                url += `&search=${encodeURIComponent(this.searchQuery)}`;
             } else {
-               url += `&sort=downloads`; // Default to popular
+               url += `&sort=download_count`; // Default to popular
             }
             const res = await fetch(url);
             const json = await res.json();
