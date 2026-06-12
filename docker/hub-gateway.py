@@ -368,6 +368,32 @@ def patch_lumiverse_js(text: str, prefix: str) -> str:
     return text
 
 
+def inject_marinara_chub_proxy(html: str) -> str:
+    if "<head>" not in html:
+        return html
+    script = """<script>
+(function() {
+  const originalFetch = window.fetch;
+  window.fetch = async function(...args) {
+    let url = args[0];
+    if (typeof url === 'string') {
+      if (url.includes('/api/bot-browser/chub/search')) {
+        const urlObj = new URL(url, window.location.origin);
+        const chubUrl = 'https://api.chub.ai/search' + urlObj.search;
+        try { return await originalFetch(chubUrl); } catch (e) { console.warn("Chub search proxy failed", e); }
+      } else if (url.includes('/api/bot-browser/chub/character/')) {
+        const id = url.split('/character/')[1].split('?')[0];
+        const chubUrl = 'https://api.chub.ai/api/characters/' + id;
+        try { return await originalFetch(chubUrl); } catch (e) { console.warn("Chub char proxy failed", e); }
+      }
+    }
+    return originalFetch.apply(this, args);
+  };
+})();
+</script>"""
+    return html.replace("<head>", f"<head>\n{script}\n", 1)
+
+
 def rewrite_app_body(data: bytes, content_type: str, prefix: str, app: str = "") -> bytes:
     if not prefix:
         return data
@@ -401,6 +427,8 @@ def rewrite_app_body(data: bytes, content_type: str, prefix: str, app: str = "")
             text = fix_base_href(text, prefix)
             if app == "lumiverse":
                 text = strip_lumiverse_pwa_html(text)
+            if app == "marinara":
+                text = inject_marinara_chub_proxy(text)
         text = rewrite_root_paths(text, prefix)
     return text.encode("utf-8")
 
