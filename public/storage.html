@@ -95,6 +95,13 @@
       display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 1.25rem;
     }
 
+    @media (max-width: 480px) {
+      .grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.75rem;
+      }
+    }
+
     /* Cards */
     .card {
       background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
@@ -233,7 +240,7 @@
         <div v-if="currentTab === 'online'" class="online-view">
            <div v-if="onlineSearching" class="loader-wrap"><div class="loader"></div></div>
            <div v-else-if="onlineResults.length === 0" class="empty-state">
-              Type something and press Enter to search Chub directly from your browser!
+              No characters found. Try a different search!
            </div>
            <div v-else class="grid">
               <div class="card" v-for="node in onlineResults" :key="node.id" @click="openOnlineModal(node)">
@@ -345,15 +352,23 @@
       methods: {
         setTab(tab) {
           this.currentTab = tab;
-          this.searchQuery = '';
+          if (tab === 'online' && this.onlineResults.length === 0) {
+            this.handleSearch();
+          }
         },
         async handleSearch() {
-          if (this.currentTab !== 'online' || !this.searchQuery.trim()) return;
+          if (this.currentTab !== 'online') return;
           this.onlineSearching = true;
           try {
-            const res = await fetch(`https://api.chub.ai/search?search=${encodeURIComponent(this.searchQuery)}&first=50`);
+            let url = `https://api.chub.ai/search?first=50`;
+            if (this.searchQuery.trim()) {
+               url += `&search=${encodeURIComponent(this.searchQuery)}`;
+            } else {
+               url += `&sort=downloads`; // Default to popular
+            }
+            const res = await fetch(url);
             const json = await res.json();
-            this.onlineResults = json.data.nodes || [];
+            this.onlineResults = json.data?.nodes || [];
           } catch (e) {
             this.showToast('Failed to fetch from Chub. Try again later.', true);
           } finally {
