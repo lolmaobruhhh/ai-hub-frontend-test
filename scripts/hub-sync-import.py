@@ -948,7 +948,9 @@ def st_character_names() -> set[str]:
             continue
         if path.name.startswith("hub_"):
             continue
-        names.add(st_display_name(path.stem).strip().lower())
+        raw = st_display_name(path.stem)
+        canon = canonical_slug(name_slug(raw))
+        names.add(canon.replace("_", " "))
     return names
 
 

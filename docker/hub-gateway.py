@@ -11,10 +11,19 @@ import select
 import socket
 import subprocess
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from concurrent.futures import ThreadPoolExecutor
+from socketserver import ThreadingMixIn
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 import urllib.request
+
+class ThreadPoolHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+    executor = ThreadPoolExecutor(max_workers=64)
+
+    def process_request(self, request, client_address):
+        self.executor.submit(self.process_request_thread, request, client_address)
 
 DATA_ROOT = Path(os.environ.get("DATA_ROOT", "/data"))
 PUBLIC = Path("/opt/hub/public")
@@ -629,7 +638,7 @@ class Handler(BaseHTTPRequestHandler):
             shared_dir = DATA_ROOT / "shared"
             chars = []
             lores = []
-            for t_dir, lst in [("characters", chars), ("lorebooks", lores)]:
+            for t_dir, lst in [("characters", chars), ("world_info", lores)]:
                 d = shared_dir / t_dir
                 if d.is_dir():
                     for f in d.iterdir():
@@ -910,15 +919,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self) -> None:
         self._proxy_http("OPTIONS")
 
-
 def main() -> None:
     print(
         f"[gateway] starting on 0.0.0.0:{HUB_PORT} mode=st-root+subpath-spas "
         f"st=/ prefixes={','.join(APP_PREFIXES.values())} hub=/hub",
         flush=True,
     )
-    ThreadingHTTPServer.request_queue_size = 512
-    server = ThreadingHTTPServer(("0.0.0.0", HUB_PORT), Handler)
+    server = ThreadPoolHTTPServer(("0.0.0.0", HUB_PORT), Handler)
     server.serve_forever()
 
 
