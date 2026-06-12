@@ -1314,6 +1314,124 @@ def import_characters_to_lumiverse(state: dict) -> int:
     return imported
 
 
+def export_marinara_lorebooks_to_shared(state: dict) -> int:
+    if not should_run_export("marinara"):
+        return 0
+    if not backend_up(MARINARA_PORT):
+        return 0
+
+    status, payload = http_json("GET", f"http://127.0.0.1:{MARINARA_PORT}/api/lorebooks/")
+    if status >= 400 or not isinstance(payload, list):
+        return 0
+
+    world_dir = SHARED / "world_info"
+    world_dir.mkdir(parents=True, exist_ok=True)
+    exported = 0
+
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        lb_id = str(item.get("id") or "")
+        if not lb_id:
+            continue
+
+        updated = str(item.get("updatedAt") or item.get("updated_at") or "")
+        name = str(item.get("name") or "lorebook")
+        
+        canon_name = f"{name_slug(name)}_{lb_id[:6]}.json"
+        rel = f"world_info/{canon_name}"
+
+        ckey = f"marinara_lb:{lb_id}"
+        prev = state.get("exports", {}).get(ckey)
+        if prev and prev.get("updated") >= updated:
+            continue
+
+        status_exp, exp_json = http_json("GET", f"http://127.0.0.1:{MARINARA_PORT}/api/lorebooks/{lb_id}/export?format=compatible")
+        if status_exp >= 400 or not exp_json:
+            continue
+
+        dest = world_dir / canon_name
+        try:
+            dest.write_text(json.dumps(exp_json, indent=2), encoding="utf-8")
+            state.setdefault("world_info", {})[rel] = file_sig(dest)
+            state.setdefault("exports", {})[ckey] = {"updated": updated, "file": rel}
+            exported += 1
+            log(f"exported lorebook → shared: {rel}")
+        except Exception as exc:
+            log(f"failed to write exported marinara lorebook {rel}: {exc}")
+
+    return exported
+
+
+def export_lumiverse_lorebooks_to_shared(state: dict) -> int:
+    if not should_run_export("lumiverse"):
+        return 0
+    if not backend_up(LUMIVERSE_PORT):
+        return 0
+
+    session = lumiverse_session()
+    if not session:
+        return 0
+    opener, auth_headers = session
+
+    base = f"http://127.0.0.1:{LUMIVERSE_PORT}"
+    status, payload = http_json(
+        "GET",
+        f"{base}/api/v1/world_books?limit=500&offset=0",
+        headers=auth_headers,
+        opener=opener,
+    )
+    if status >= 400 or not isinstance(payload, dict):
+        return 0
+
+    items = payload.get("items", payload) if isinstance(payload, dict) else payload
+    if not isinstance(items, list):
+        return 0
+
+    world_dir = SHARED / "world_info"
+    world_dir.mkdir(parents=True, exist_ok=True)
+    exported = 0
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        lb_id = str(item.get("id") or "")
+        if not lb_id:
+            continue
+
+        updated = str(item.get("updatedAt") or item.get("updated_at") or "")
+        name = str(item.get("name") or "lorebook")
+        
+        canon_name = f"{name_slug(name)}_{lb_id[:6]}.json"
+        rel = f"world_info/{canon_name}"
+
+        ckey = f"lumiverse_lb:{lb_id}"
+        prev = state.get("exports", {}).get(ckey)
+        if prev and prev.get("updated") >= updated:
+            continue
+
+        status_exp, exp_json = http_json(
+            "GET",
+            f"{base}/api/v1/world_books/{lb_id}/export?format=sillytavern",
+            headers=auth_headers,
+            opener=opener,
+        )
+        if status_exp >= 400 or not exp_json:
+            continue
+
+        dest = world_dir / canon_name
+        try:
+            dest.write_text(json.dumps(exp_json, indent=2), encoding="utf-8")
+            state.setdefault("world_info", {})[rel] = file_sig(dest)
+            state.setdefault("exports", {})[ckey] = {"updated": updated, "file": rel}
+            exported += 1
+            log(f"exported lorebook → shared: {rel}")
+        except Exception as exc:
+            log(f"failed to write exported lumiverse lorebook {rel}: {exc}")
+
+    return exported
+
+
 def import_lorebooks_to_marinara(state: dict) -> int:
     world_dir = SHARED / "world_info"
     if not world_dir.is_dir():
@@ -1354,6 +1472,9 @@ def main() -> int:
         n_export_marinara = export_marinara_to_shared(state)
         n_export_lumiverse = export_lumiverse_to_shared(state)
         n_export_st = sync_st_to_shared(state)
+        
+        n_export_marinara_lb = export_marinara_lorebooks_to_shared(state)
+        n_export_lumiverse_lb = export_lumiverse_lorebooks_to_shared(state)
 
         if should_run_import():
             rsync_shared()
@@ -1370,7 +1491,8 @@ def main() -> int:
         save_state(state)
         log(
             "done — "
-            f"exported: marinara +{n_export_marinara}, lumiverse +{n_export_lumiverse}, st +{n_export_st}; "
+            f"exported: marinara +{n_export_marinara}, lumiverse +{n_export_lumiverse}, st +{n_export_st}, "
+            f"lorebooks (marinara +{n_export_marinara_lb}, lumiverse +{n_export_lumiverse_lb}); "
             f"imported: marinara +{n_chars_marinara}, lumiverse +{n_chars_lumiverse}, "
             f"st +{n_chars_st}, lorebooks +{n_worlds}"
         )
