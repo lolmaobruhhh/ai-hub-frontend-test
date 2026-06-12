@@ -633,7 +633,9 @@ class Handler(BaseHTTPRequestHandler):
             return True
 
         if path in {"/storage", "/storage/", "/api/storage", "/api/storage/"} and method == "GET":
-            self._send_public_file("storage.html", "text/html; charset=utf-8")
+            self.send_response(302)
+            self.send_header("Location", "/apps/marinara/")
+            self.end_headers()
             return True
 
         if path == "/api/storage/list" and method == "GET":
