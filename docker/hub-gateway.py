@@ -17,6 +17,7 @@ from socketserver import ThreadingMixIn
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 import urllib.request
+import urllib.error
 
 class ThreadPoolHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
@@ -201,6 +202,137 @@ def decompress_body(data: bytes, encoding: str | None) -> tuple[bytes, bool]:
             return data, False
 
     return data, False
+
+
+# ── Chub / charhub proxy helpers ──────────────────────────────────────────
+# Chub (api.chub.ai) and the avatar CDN (avatars.charhub.io) both sit behind
+# Cloudflare. Requests from datacenter IPs (like HF Spaces) succeed as long as
+# we send a normal browser User-Agent; the previous "Node fetch gets a 403"
+# theory was not reproducible. The important robustness fixes here are:
+#   1. Surface the *real* upstream status/body instead of masking everything as
+#      a generic 500 (that opaque 500 was the actual "proxy broke" symptom).
+#   2. Always decompress, so rewriting avatar URLs as text never silently fails
+#      if Chub ever turns on gzip/brotli.
+CHUB_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+CHUB_CDN_PREFIX = "https://avatars.charhub.io/avatars/"
+CHUB_AVATAR_PROXY = "/api/storage/chub/avatar/"
+
+
+def chub_fetch(
+    url: str,
+    *,
+    accept: str = "application/json",
+    referer: str | None = "https://chub.ai/",
+    timeout: int = 20,
+) -> tuple[int, bytes, str]:
+    """Fetch a Chub/charhub URL with browser-like headers.
+
+    Returns ``(status, body, content_type)``. The body is always decompressed.
+    On an HTTP error the upstream status code and error body are returned rather
+    than raising, so the gateway can pass Chub's real status through to the
+    browser (visible in the network tab) instead of an opaque 500.
+    """
+    headers = {
+        "User-Agent": CHUB_UA,
+        "Accept": accept,
+        # We always decompress below, so advertising gzip is safe.
+        "Accept-Encoding": "gzip, deflate",
+    }
+    if referer:
+        headers["Referer"] = referer
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        status = 200
+    except urllib.error.HTTPError as exc:  # 4xx / 5xx from Chub
+        resp = exc
+        status = exc.code
+    with resp:
+        raw = resp.read()
+        enc = resp.headers.get("Content-Encoding")
+        ctype = resp.headers.get_content_type() or "application/octet-stream"
+    body, _ = decompress_body(raw, enc)
+    return status, body, ctype
+
+
+def rewrite_chub_avatars(body: bytes) -> bytes:
+    """Route avatar CDN URLs in a Chub JSON body through our avatar proxy."""
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError:
+        return body
+    return text.replace(CHUB_CDN_PREFIX, CHUB_AVATAR_PROXY).encode("utf-8")
+
+
+def build_chub_search_url(query: str) -> str:
+    """Translate incoming search params (storage.html *and* Marinara frontend)
+    into the parameter names api.chub.ai actually expects.
+
+    Marinara's own backend (packages/server/src/routes/bot-browser.routes.ts)
+    forwards a rich filter set; the gateway used to drop all of it, so tag /
+    token / time filters silently did nothing. This keeps parity.
+    """
+    from urllib.parse import urlencode
+
+    qs = parse_qs(query)
+
+    def first(key: str, default: str | None = None) -> str | None:
+        vals = qs.get(key)
+        return vals[0] if vals else default
+
+    out: dict[str, str] = {}
+    out["search"] = first("search") or first("q") or ""
+    out["first"] = first("first", "48")
+    out["page"] = first("page", "1")
+
+    nsfw = first("nsfw", "true")
+    out["nsfw"] = nsfw
+    out["nsfl"] = nsfw
+
+    # Chub defaults Marinara always sends.
+    out["include_forks"] = first("include_forks", "true")
+    out["venus"] = first("venus", "false")
+    out["min_tokens"] = first("min_tokens", "50")
+
+    sort = first("sort", "download_count")
+    if sort == "downloads":  # legacy storage.html value
+        sort = "download_count"
+    if sort and sort != "default":
+        out["sort"] = sort
+
+    if first("asc") == "true":
+        out["asc"] = "true"
+
+    max_days = first("max_days_ago")
+    if max_days and max_days != "0":
+        out["max_days_ago"] = max_days
+
+    for key in ("special_mode", "username", "max_tokens"):
+        val = first(key)
+        if val:
+            out[key] = val
+
+    # Tag filters use Chub's "topics" / "excludetopics" names.
+    tags = first("tags") or first("topics")
+    if tags:
+        out["topics"] = tags
+    extags = first("excludeTags") or first("excludetopics")
+    if extags:
+        out["excludetopics"] = extags
+
+    for key in (
+        "require_images",
+        "require_lore",
+        "require_expressions",
+        "require_alternate_greetings",
+    ):
+        if first(key) == "true":
+            out[key] = "true"
+
+    return "https://api.chub.ai/search?" + urlencode(out)
 
 
 def fix_base_href(text: str, prefix: str) -> str:
@@ -807,126 +939,76 @@ class Handler(BaseHTTPRequestHandler):
             return True
 
         if path in ("/api/storage/chub/search", "/apps/marinara/api/bot-browser/chub/search") and method == "GET":
-            import urllib.request
-            import json
-            from urllib.parse import parse_qs, urlencode
-            
-            qs = parse_qs(query)
-            out_q = {}
-            if "search" in qs:
-                out_q["search"] = qs["search"][0]
-            elif "q" in qs:
-                out_q["search"] = qs["q"][0]
-            else:
-                out_q["search"] = ""
-                
-            out_q["first"] = qs.get("first", ["48"])[0]
-            out_q["page"] = qs.get("page", ["1"])[0]
-            out_q["sort"] = qs.get("sort", ["download_count"])[0]
-            if out_q["sort"] == "downloads":
-                out_q["sort"] = "download_count"
-            out_q["nsfw"] = qs.get("nsfw", ["true"])[0]
-            out_q["nsfl"] = out_q["nsfw"]
-            
-            url = "https://api.chub.ai/search?" + urlencode(out_q)
+            url = build_chub_search_url(query)
             try:
-                req = urllib.request.Request(url, headers={
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept': 'application/json'
-                })
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    headers = {}
-                    if resp.info().get('Content-Encoding'):
-                        headers['Content-Encoding'] = resp.info().get('Content-Encoding')
-                    data_bytes = resp.read()
-                    if not headers:
-                        try:
-                            # Rewrite image URLs to route through proxy
-                            data_str = data_bytes.decode('utf-8')
-                            data_str = data_str.replace("https://avatars.charhub.io/avatars/", "/api/storage/chub/avatar/")
-                            data_bytes = data_str.encode('utf-8')
-                        except:
-                            pass
-                    self._send_bytes(200, data_bytes, "application/json", headers)
+                status, body, _ = chub_fetch(url, accept="application/json")
             except Exception as e:
-                import traceback
-                self._send_json(500, {"error": str(e), "traceback": traceback.format_exc()})
+                # Network/timeout only — Chub HTTP errors come back as `status`.
+                self._send_json(502, {"error": f"chub search unreachable: {e}"})
+                return True
+            if status == 200:
+                body = rewrite_chub_avatars(body)
+            # Pass Chub's real status through so failures are visible, not a 500.
+            self._send_bytes(status, body, "application/json")
             return True
 
         if (path.startswith("/api/storage/chub/character/") or path.startswith("/apps/marinara/api/bot-browser/chub/character/")) and method == "GET":
-            import urllib.request
-            import json
-            import traceback
-            char_id = path.split("/character/")[1]
-            url = f"https://api.chub.ai/api/characters/{char_id}?full=true"
+            from urllib.parse import quote
+            char_id = path.split("/character/", 1)[1]
+            # Re-encode path segments (Author/name) without touching the slash.
+            safe_id = quote(char_id, safe="/")
+            url = f"https://api.chub.ai/api/characters/{safe_id}?full=true"
             try:
-                req = urllib.request.Request(url, headers={
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept': 'application/json'
-                })
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    headers = {}
-                    if resp.info().get('Content-Encoding'):
-                        headers['Content-Encoding'] = resp.info().get('Content-Encoding')
-                    data_bytes = resp.read()
-                    if not headers:
-                        try:
-                            # Rewrite image URLs to route through proxy
-                            data_str = data_bytes.decode('utf-8')
-                            data_str = data_str.replace("https://avatars.charhub.io/avatars/", "/api/storage/chub/avatar/")
-                            data_bytes = data_str.encode('utf-8')
-                        except:
-                            pass
-                    self._send_bytes(200, data_bytes, "application/json", headers)
+                status, body, _ = chub_fetch(url, accept="application/json")
             except Exception as e:
-                self._send_json(500, {"error": str(e), "traceback": traceback.format_exc()})
+                self._send_json(502, {"error": f"chub character unreachable: {e}"})
+                return True
+            if status == 200:
+                body = rewrite_chub_avatars(body)
+            self._send_bytes(status, body, "application/json")
             return True
 
         if (path.startswith("/api/storage/chub/avatar/") or path.startswith("/apps/marinara/api/bot-browser/chub/avatar/")) and method == "GET":
-            import urllib.request
-            char_id = path.split("/avatar/")[1]
-            url = f"https://avatars.charhub.io/avatars/{char_id}"
-            if not url.endswith(('.webp', '.png', '.jpg', '.jpeg')):
-                url += "/avatar.webp"
-            try:
-                req = urllib.request.Request(url, headers={
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
-                    'Referer': 'https://chub.ai/'
-                })
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    ct = resp.headers.get_content_type() or "image/webp"
-                    self._send_bytes(200, resp.read(), ct, {"Cache-Control": "public, max-age=86400"})
-            except Exception as e:
+            char_id = path.split("/avatar/", 1)[1]
+            base = f"https://avatars.charhub.io/avatars/{char_id}"
+            # Try the requested asset, then fall back to avatar.webp / card png.
+            if base.endswith((".webp", ".png", ".jpg", ".jpeg")):
+                candidates = [base, base.rsplit("/", 1)[0] + "/chara_card_v2.png"]
+            else:
+                candidates = [base + "/avatar.webp", base + "/chara_card_v2.png"]
+            last_status = 502
+            for cand in candidates:
                 try:
-                    url2 = f"https://avatars.charhub.io/avatars/{char_id}/chara_card_v2.png"
-                    req2 = urllib.request.Request(url2, headers={
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                        'Referer': 'https://chub.ai/'
-                    })
-                    with urllib.request.urlopen(req2, timeout=15) as resp2:
-                        self._send_bytes(200, resp2.read(), "image/png", {"Cache-Control": "public, max-age=86400"})
-                except:
-                    self._send_json(500, {"error": str(e)})
+                    status, body, ctype = chub_fetch(
+                        cand, accept="image/webp,image/apng,image/*,*/*;q=0.8"
+                    )
+                except Exception:
+                    continue
+                if status == 200:
+                    if not ctype.startswith("image/"):
+                        ctype = "image/png" if cand.endswith(".png") else "image/webp"
+                    self._send_bytes(200, body, ctype, {"Cache-Control": "public, max-age=86400"})
+                    return True
+                last_status = status
+            self._send_json(last_status if last_status != 200 else 404,
+                            {"error": "avatar not found"})
             return True
 
         if (path.startswith("/api/storage/chub/download/") or path.startswith("/apps/marinara/api/bot-browser/chub/download/")) and method == "GET":
-            import urllib.request
-            char_id = path.split("/download/")[1]
+            char_id = path.split("/download/", 1)[1]
             url = f"https://avatars.charhub.io/avatars/{char_id}/chara_card_v2.png"
             try:
-                req = urllib.request.Request(url, headers={
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept': 'image/png,image/*,*/*;q=0.8',
-                    'Referer': 'https://chub.ai/'
-                })
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    self._send_bytes(200, resp.read(), "image/png", {
-                        "Content-Disposition": 'attachment; filename="character.png"',
-                        "Cache-Control": "public, max-age=86400"
-                    })
+                status, body, _ = chub_fetch(url, accept="image/png,image/*,*/*;q=0.8")
             except Exception as e:
-                self._send_json(500, {"error": str(e)})
+                self._send_json(502, {"error": f"chub download unreachable: {e}"})
+                return True
+            if status != 200:
+                self._send_json(status, {"error": f"chub download failed: {status}"})
+                return True
+            self._send_bytes(200, body, "image/png", {
+                "Content-Disposition": 'attachment; filename="character.png"',
+                "Cache-Control": "public, max-age=86400",
+            })
             return True
 
         if path == "/api/storage/catbox" and method == "POST":
