@@ -932,6 +932,30 @@ def sync_st_to_shared(state: dict) -> int:
         except OSError as exc:
             log(f"ST export failed for {path.name}: {exc}")
 
+    # Export ST worlds to shared/world_info
+    st_worlds_dir = DATA_ROOT / "sillytavern" / "data" / "default-user" / "worlds"
+    world_info_dir = SHARED / "world_info"
+    world_info_dir.mkdir(parents=True, exist_ok=True)
+    if st_worlds_dir.is_dir():
+        for path in sorted(st_worlds_dir.glob("*.json")):
+            if not path.is_file() or path.name.startswith("hub_"):
+                continue
+            rel = f"world_info/{path.name}"
+            sig = file_sig(path)
+            prev = state.get("world_info", {}).get(rel)
+            if prev == sig:
+                continue
+            dest = world_info_dir / path.name
+            try:
+                if path.resolve() != dest.resolve():
+                    import shutil
+                    shutil.copy2(path, dest)
+                    state.setdefault("world_info", {})[rel] = sig
+                    copied += 1
+                    log(f"exported lorebook → shared: {rel}")
+            except OSError as exc:
+                log(f"ST export lorebook failed {path.name}: {exc}")
+
     return copied
 
 
