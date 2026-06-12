@@ -211,14 +211,17 @@
       <div class="controls">
         <div class="search">
           <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-          <input type="text" v-model="searchQuery" placeholder="Search by name, tags...">
+          <input type="text" v-model="searchQuery" :placeholder="currentTab === 'online' ? 'Search Chub (e.g. Tifa)' : 'Search local files...'" @keyup.enter="handleSearch">
         </div>
         <div class="tabs">
-          <button class="tab" :class="{active: currentTab === 'characters'}" @click="currentTab = 'characters'">
+          <button class="tab" :class="{active: currentTab === 'characters'}" @click="setTab('characters')">
             Characters ({{ data.characters.length }})
           </button>
-          <button class="tab" :class="{active: currentTab === 'lorebooks'}" @click="currentTab = 'lorebooks'">
+          <button class="tab" :class="{active: currentTab === 'lorebooks'}" @click="setTab('lorebooks')">
             Lorebooks ({{ data.lorebooks.length }})
+          </button>
+          <button class="tab" :class="{active: currentTab === 'online'}" @click="setTab('online')" style="color: #c084fc;">
+            ✦ Online (Chub)
           </button>
         </div>
       </div>
@@ -226,18 +229,41 @@
       <div v-if="loading" class="loader-wrap"><div class="loader"></div></div>
       
       <div v-else>
-        <div v-if="filteredItems.length === 0" class="empty-state">
-          No items found matching your search.
-        </div>
-        <div v-else class="grid">
-          <div class="card" v-for="item in filteredItems" :key="item.path" @click="openModal(item)" :class="{'is-json': item.isJson}">
-            <img class="card-img" :src="getImgUrl(item)" :style="{objectFit: item.isJson ? 'contain' : 'cover'}" @error="handleImgError">
-            <div class="card-content">
-              <div class="card-meta">
-                <span class="badge">{{ item.isJson ? 'JSON' : 'PNG' }}</span>
-                <span>{{ formatSize(item.size) }}</span>
+        <!-- Online State -->
+        <div v-if="currentTab === 'online'" class="online-view">
+           <div v-if="onlineSearching" class="loader-wrap"><div class="loader"></div></div>
+           <div v-else-if="onlineResults.length === 0" class="empty-state">
+              Type something and press Enter to search Chub directly from your browser!
+           </div>
+           <div v-else class="grid">
+              <div class="card" v-for="node in onlineResults" :key="node.id" @click="openOnlineModal(node)">
+                <img class="card-img" :src="node.avatar_url" style="object-fit: cover">
+                <div class="card-content">
+                  <div class="card-meta">
+                    <span class="badge" style="background:#c084fc; color:white">★ {{ node.starCount }}</span>
+                    <span>{{ node.nTokens }} Tokens</span>
+                  </div>
+                  <h3 class="card-title">{{ node.name }}</h3>
+                </div>
               </div>
-              <h3 class="card-title">{{ item.displayName }}</h3>
+           </div>
+        </div>
+
+        <!-- Local State -->
+        <div v-else>
+          <div v-if="filteredItems.length === 0" class="empty-state">
+            No items found matching your search.
+          </div>
+          <div v-else class="grid">
+            <div class="card" v-for="item in filteredItems" :key="item.path" @click="openModal(item)" :class="{'is-json': item.isJson}">
+              <img class="card-img" :src="getImgUrl(item)" :style="{objectFit: item.isJson ? 'contain' : 'cover'}" @error="handleImgError">
+              <div class="card-content">
+                <div class="card-meta">
+                  <span class="badge">{{ item.isJson ? 'JSON' : 'PNG' }}</span>
+                  <span>{{ formatSize(item.size) }}</span>
+                </div>
+                <h3 class="card-title">{{ item.displayName }}</h3>
+              </div>
             </div>
           </div>
         </div>
@@ -249,24 +275,33 @@
       <div class="modal">
         <button class="btn-close" @click="closeModal">✕</button>
         <div class="modal-left">
-          <img :src="getImgUrl(selected)" :style="{objectFit: selected.isJson ? 'contain' : 'cover', padding: selected.isJson ? '2rem' : '0'}" @error="handleImgError">
+          <img :src="getImgUrl(selected)" :style="{objectFit: (selected.isJson && currentTab !== 'online') ? 'contain' : 'cover', padding: (selected.isJson && currentTab !== 'online') ? '2rem' : '0'}" @error="handleImgError">
         </div>
         <div class="modal-right">
           <div>
-            <h2 class="modal-title">{{ selected.metadataName || selected.displayName }}</h2>
+            <h2 class="modal-title">{{ selected.metadataName || selected.displayName || selected.name }}</h2>
             <div class="modal-author">{{ selected.metadataCreator || (selected.isJson ? 'JSON FILE' : 'IMAGE FILE') }}</div>
           </div>
           
           <div class="actions">
-            <button class="btn btn-primary" @click="downloadSelected">
-              <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-              Download
-            </button>
-            <button class="btn btn-secondary" @click="uploadToCatbox" :disabled="uploading">
-              <span v-if="uploading" class="loader" style="width:16px;height:16px;border-width:2px;"></span>
-              <svg v-else width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
-              {{ uploading ? 'Uploading...' : 'Get Catbox Link' }}
-            </button>
+            <template v-if="currentTab === 'online'">
+              <button class="btn btn-primary" @click="importOnlineCard" :disabled="uploading" style="background: #c084fc">
+                <span v-if="uploading" class="loader" style="width:16px;height:16px;border-width:2px;"></span>
+                <svg v-else width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                {{ uploading ? 'Importing...' : 'Import to Hub' }}
+              </button>
+            </template>
+            <template v-else>
+              <button class="btn btn-primary" @click="downloadSelected">
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                Download
+              </button>
+              <button class="btn btn-secondary" @click="uploadToCatbox" :disabled="uploading">
+                <span v-if="uploading" class="loader" style="width:16px;height:16px;border-width:2px;"></span>
+                <svg v-else width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+                {{ uploading ? 'Uploading...' : 'Get Catbox Link' }}
+              </button>
+            </template>
           </div>
 
           <div class="markdown" v-html="renderMarkdown(selected)"></div>
@@ -292,6 +327,8 @@
           currentTab: 'characters',
           searchQuery: '',
           data: { characters: [], lorebooks: [] },
+          onlineResults: [],
+          onlineSearching: false,
           selected: null,
           uploading: false,
           toast: { show: false, message: '', error: false }
@@ -299,12 +336,71 @@
       },
       computed: {
         filteredItems() {
+          if (this.currentTab === 'online') return [];
           const items = this.data[this.currentTab] || [];
           const query = this.searchQuery.toLowerCase();
           return items.filter(i => i.displayName.toLowerCase().includes(query) || (i.metadataName && i.metadataName.toLowerCase().includes(query)));
         }
       },
       methods: {
+        setTab(tab) {
+          this.currentTab = tab;
+          this.searchQuery = '';
+        },
+        async handleSearch() {
+          if (this.currentTab !== 'online' || !this.searchQuery.trim()) return;
+          this.onlineSearching = true;
+          try {
+            const res = await fetch(`https://api.chub.ai/search?search=${encodeURIComponent(this.searchQuery)}&first=50`);
+            const json = await res.json();
+            this.onlineResults = json.data.nodes || [];
+          } catch (e) {
+            this.showToast('Failed to fetch from Chub. Try again later.', true);
+          } finally {
+            this.onlineSearching = false;
+          }
+        },
+        openOnlineModal(node) {
+          this.selected = {
+            ...node,
+            isOnline: true,
+            metadataName: node.name,
+            metadataCreator: `BY ${node.fullPath.split('/')[0]}`,
+            description: node.description,
+            tagline: node.tagline,
+            avatar: node.max_res_url || node.avatar_url,
+          };
+          document.body.style.overflow = 'hidden';
+        },
+        async importOnlineCard() {
+           if (!this.selected || this.uploading) return;
+           this.uploading = true;
+           try {
+             const imgRes = await fetch(this.selected.avatar);
+             const blob = await imgRes.blob();
+             const formData = new FormData();
+             const filename = this.selected.name.replace(/[^a-zA-Z0-9]/g, '_') + '.png';
+             formData.append('file', blob, filename);
+             
+             const uploadRes = await fetch('/api/storage/upload', {
+               method: 'POST',
+               body: formData
+             });
+             const result = await uploadRes.json();
+             
+             if (result.success) {
+               this.showToast('Imported successfully! Check Characters tab.');
+               this.closeModal();
+               this.fetchData(); // Refresh local list
+             } else {
+               this.showToast(result.error || 'Import failed.', true);
+             }
+           } catch (e) {
+             this.showToast('Failed to fetch or upload image.', true);
+           } finally {
+             this.uploading = false;
+           }
+        },
         async fetchData() {
           try {
             const res = await fetch('/api/storage/list');

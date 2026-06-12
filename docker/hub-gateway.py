@@ -703,6 +703,58 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"characters": chars, "lorebooks": lores})
             return True
 
+        if path == "/api/storage/upload" and method == "POST":
+            try:
+                content_length = int(self.headers.get('Content-Length', 0))
+                if content_length > 10 * 1024 * 1024:
+                    self._send_json(413, {"error": "File too large (max 10MB)"})
+                    return True
+
+                ctype = self.headers.get('Content-Type', '')
+                if not ctype.startswith('multipart/form-data'):
+                    self._send_json(400, {"error": "Must be multipart/form-data"})
+                    return True
+                
+                # Simple multipart parser for exactly 1 file part
+                import cgi
+                form = cgi.FieldStorage(
+                    fp=self.rfile,
+                    headers=self.headers,
+                    environ={'REQUEST_METHOD': 'POST', 'CONTENT_TYPE': ctype}
+                )
+                
+                if 'file' not in form:
+                    self._send_json(400, {"error": "No file uploaded"})
+                    return True
+                
+                file_item = form['file']
+                filename = file_item.filename
+                file_data = file_item.file.read()
+
+                if not filename or not file_data:
+                    self._send_json(400, {"error": "Empty file"})
+                    return True
+
+                ext = filename.lower()
+                is_char = ext.endswith('.png') or ext.endswith('.webp')
+                is_lore = ext.endswith('.json')
+                
+                if not (is_char or is_lore):
+                    self._send_json(400, {"error": "Only .png, .webp, or .json allowed"})
+                    return True
+
+                folder = "characters" if is_char else "world_info"
+                dest_path = DATA_ROOT / "shared" / folder / filename
+                
+                with open(dest_path, "wb") as f:
+                    f.write(file_data)
+                    
+                self._send_json(200, {"success": True, "path": str(dest_path)})
+                return True
+            except Exception as e:
+                self._send_json(500, {"error": str(e)})
+                return True
+
         if path == "/api/storage/download" and method == "GET":
             qs = parse_qs(query)
             target = qs.get("path", [""])[0]
