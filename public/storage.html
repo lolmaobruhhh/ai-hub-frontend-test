@@ -168,6 +168,10 @@
         <span>AI Hub<small>Character Library</small></span>
       </a>
       <div class="nav-actions">
+        <button class="btn-nav" @click="importFromLink" :disabled="uploading" title="Import a JanitorAI / DataCat character by link">
+          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.8 10.2a4 4 0 00-5.6 0l-4 4a4 4 0 105.6 5.7l1.1-1.1m-.7-4.9a4 4 0 005.6 0l4-4a4 4 0 00-5.6-5.7l-1.1 1.1"/></svg>
+          Import link
+        </button>
         <label class="btn-nav upload-btn">
           <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v12m0-12l-4 4m4-4l4 4M4 18v1a1 1 0 001 1h14a1 1 0 001-1v-1"/></svg>
           Upload
@@ -204,6 +208,23 @@
           <button class="tab src-chub" :class="{active: currentTab === 'chub'}" @click="setTab('chub')">✦ Chub</button>
           <button class="tab src-datacat" :class="{active: currentTab === 'datacat'}" @click="setTab('datacat')">🐱 DataCat</button>
         </div>
+      </div>
+
+      <div class="controls" v-if="isOnline" style="margin-top:-.75rem">
+        <select v-model="sortBy" @change="runOnlineSearch(true)"
+                style="padding:.6rem .8rem;border-radius:10px;background:rgba(255,255,255,0.05);border:1px solid var(--border);color:#fff;font-family:var(--font-body)">
+          <option value="download_count">⬇ Popular</option>
+          <option value="last_activity_at">🔥 Trending</option>
+          <option value="created_at">🆕 Newest</option>
+          <option value="rating">★ Top rated</option>
+        </select>
+        <input type="text" v-model="filterTags" @keyup.enter="runOnlineSearch(true)"
+               placeholder="Tags (comma-separated) — e.g. anime, fantasy"
+               style="flex:1 1 200px;padding:.6rem .9rem;border-radius:10px;background:rgba(255,255,255,0.05);border:1px solid var(--border);color:#fff;font-family:var(--font-body)">
+        <label style="display:inline-flex;align-items:center;gap:.4rem;color:var(--text-muted);font-weight:600;font-size:.85rem;cursor:pointer">
+          <input type="checkbox" v-model="nsfw" @change="runOnlineSearch(true)"> NSFW
+        </label>
+        <button class="btn-nav" @click="runOnlineSearch(true)">Apply</button>
       </div>
 
       <div v-if="loading" class="loader-wrap"><div class="loader"></div></div>
@@ -417,6 +438,9 @@
           onlineSearching: false,
           onlinePage: 1,         // chub page / datacat offset-page
           onlineQuery: '',
+          sortBy: 'download_count',
+          filterTags: '',
+          nsfw: true,
           onlineHasMore: false,
           selected: null,
           uploading: false,
@@ -481,8 +505,11 @@
             let cards = [];
             if (source === 'chub') {
               const q = this.onlineQuery.trim();
-              const p = new URLSearchParams({ first: '40', page: String(this.onlinePage), nsfw: 'true', nsfl: 'true', include_forks: 'true', venus: 'false', min_tokens: '50', search: q });
-              if (!q) p.set('sort', 'download_count');
+              const p = new URLSearchParams({ first: '40', page: String(this.onlinePage), nsfw: String(this.nsfw), nsfl: String(this.nsfw), include_forks: 'true', venus: 'false', min_tokens: '50', search: q });
+              // When searching free-text, let relevance rule; otherwise use sort.
+              if (!q) p.set('sort', this.sortBy || 'download_count');
+              const tags = this.filterTags.trim();
+              if (tags) p.set('topics', tags.split(',').map(t => t.trim()).filter(Boolean).join(','));
               const res = await fetch(`${CHUB_API}/search?${p}`, { headers: { Accept: 'application/json' } });
               if (!res.ok) throw new Error('HTTP ' + res.status);
               const j = await res.json();
@@ -497,7 +524,10 @@
               const res = await fetch(`/api/storage/datacat/search?${p}`, { headers: { Accept: 'application/json' } });
               if (!res.ok) throw new Error('HTTP ' + res.status);
               const j = await res.json();
-              const chars = j.characters || [];
+              let chars = j.characters || [];
+              // Client-side tag filter for DataCat (its API needs numeric tag ids).
+              const tags = this.filterTags.trim().toLowerCase().split(',').map(t => t.trim()).filter(Boolean);
+              if (tags.length) chars = chars.filter(c => (c.tags || []).some(t => tags.includes(String(t).toLowerCase())));
               cards = chars.map(this.normalizeDatacat);
               this.onlineHasMore = !!j.hasMore;
             }
@@ -510,6 +540,46 @@
           }
         },
         loadMoreOnline() { this.onlinePage++; this.runOnlineSearch(false); },
+
+        // Build a Tavern PNG from a DataCat/JanitorAI character id and upload it.
+        // The V2 card carries data.character_book, so lorebooks import too.
+        async datacatImportById(id, fallbackName) {
+          const dl = await fetch(`/api/storage/datacat/download/${encodeURIComponent(id)}`);
+          if (!dl.ok) throw new Error('card ' + dl.status);
+          const j = await dl.json();
+          const card = (j && j.data) ? { spec: j.spec || 'chara_card_v2', spec_version: j.spec_version || '2.0', data: j.data } : j;
+          const name = (card.data && card.data.name) || fallbackName || 'character';
+          const avatarUrl = (card.data && card.data.avatar) || '';
+          const base = await imageUrlToPngBytes(avatarUrl, name);
+          const pngBytes = pngEmbedChara(base, utf8ToBase64(JSON.stringify(card)));
+          const safe = name.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'character';
+          const fd = new FormData();
+          fd.append('file', new Blob([pngBytes], { type: 'image/png' }), safe + '.png');
+          const up = await fetch('/api/storage/upload', { method: 'POST', body: fd });
+          const r = await up.json();
+          if (!r.success) throw new Error(r.error || 'upload failed');
+          return name;
+        },
+        // Tavo-style: paste a JanitorAI (or DataCat) character link → import the
+        // character (and its embedded lorebook). JanitorAI chars are resolved via
+        // DataCat, which mirrors them by the same UUID.
+        async importFromLink() {
+          if (this.uploading) return;
+          const url = (prompt('Paste a JanitorAI or DataCat character link:') || '').trim();
+          if (!url) return;
+          const uuid = (url.match(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/) || [])[0];
+          if (!uuid) { this.showToast('No character id found in that link. Use a janitorai.com/characters/… link.', true); return; }
+          this.uploading = true;
+          try {
+            const name = await this.datacatImportById(uuid, 'character');
+            this.showToast(`Imported "${name}"! It will appear in your library shortly.`);
+            this.fetchData();
+          } catch (e) {
+            this.showToast('Import failed — this character may not be on DataCat yet. (' + (e.message || 'error') + ')', true);
+          } finally {
+            this.uploading = false;
+          }
+        },
         openOnlineModal(card) {
           this.selected = { ...card, isOnline: true, isJson: false, metadataName: card.name, metadataCreator: card.creator };
           document.body.style.overflow = 'hidden';

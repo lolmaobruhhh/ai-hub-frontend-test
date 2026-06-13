@@ -1094,6 +1094,11 @@ def import_characters_to_marinara(state: dict) -> int:
 
     existing_names = marinara_character_names()
     log(f"marinara has {len(existing_names)} characters: {sorted(existing_names)[:10]}")
+    # Match on slug so punctuation/spacing differences don't cause re-imports
+    # (e.g. Marinara name "little sister, big theft" vs file slug
+    # "little_sister_big_theft"). Mismatches here used to re-import every cycle,
+    # duplicating the character in Marinara.
+    existing_slugs = {name_slug(n) for n in existing_names}
     pending: list[tuple[str, Path]] = []
 
     for path in sorted(char_dir.iterdir()):
@@ -1110,7 +1115,8 @@ def import_characters_to_marinara(state: dict) -> int:
 
         # Check if character already exists in Marinara by name (most reliable)
         card_name = canonical_slug(char_name_from_path(path).strip().lower())
-        if card_name and card_name in existing_names:
+        card_slug = name_slug(card_name) if card_name else ""
+        if card_slug and card_slug in existing_slugs:
             # Character exists — update state sig so we don't re-check next cycle
             state["characters"][rel] = sig
             continue
@@ -1118,7 +1124,7 @@ def import_characters_to_marinara(state: dict) -> int:
         # State says imported but character is gone from Marinara — re-import
         if state["characters"].get(rel) == sig:
             # Double-check: maybe the name changed or dedup was wrong
-            if card_name and card_name not in existing_names:
+            if card_slug and card_slug not in existing_slugs:
                 log(f"marinara re-import (missing despite state): {card_name} ({path.name})")
             else:
                 continue
@@ -1231,6 +1237,7 @@ def import_characters_to_lumiverse(state: dict) -> int:
     opener, auth_headers = session
     existing_names = lumiverse_character_names(opener, auth_headers)
     log(f"lumiverse has {len(existing_names)} characters: {sorted(existing_names)[:10]}")
+    existing_slugs = {name_slug(n) for n in existing_names}
 
     pending: list[tuple[str, Path, str]] = []
     for path in sorted(char_dir.iterdir()):
@@ -1248,14 +1255,15 @@ def import_characters_to_lumiverse(state: dict) -> int:
 
         # Normalize through aliases before checking (e.g. default_seraphina → seraphina)
         card_name_norm = canonical_slug(card_name) if card_name else card_name
+        card_slug = name_slug(card_name_norm) if card_name_norm else ""
         # Character already in Lumiverse — mark as synced
-        if card_name_norm and card_name_norm in existing_names:
+        if card_slug and card_slug in existing_slugs:
             state["characters"][rel] = sig
             continue
 
         # State says imported but character gone — re-import
         if state["characters"].get(rel) == sig:
-            if card_name_norm and card_name_norm not in existing_names:
+            if card_slug and card_slug not in existing_slugs:
                 log(f"lumiverse re-import (missing despite state): {card_name_norm} ({path.name})")
             else:
                 continue
