@@ -357,8 +357,13 @@ createApp({
       const id=(url.match(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/)||[])[0];
       if(!id){this.toast2('No character id in that link.',true);return;}
       this.uploading=true;
-      try{const png=await PV.datacat.png({id,avatarUrl:'',name:'character'});await this.up(png,'character');this.toast2('Imported! Appears shortly.');this.fetchData();}
-      catch(e){this.toast2('Import failed — may not be on DataCat. ('+(e.message||'')+')',true);}
+      try{
+        const j=await(await fetch('/api/storage/datacat/download/'+encodeURIComponent(id))).json();
+        const card=(j&&j.data)?{spec:j.spec||'chara_card_v2',spec_version:j.spec_version||'2.0',data:j.data}:j;
+        const name=(card.data&&card.data.name)||'character';
+        const png=embed(await toPng(card.data&&card.data.avatar,name),b64(JSON.stringify(card)));
+        await this.up(png,name);this.toast2('Imported "'+name+'"! Appears shortly.');this.fetchData();
+      }catch(e){this.toast2('Import failed — may not be on DataCat. ('+(e.message||'')+')',true);}
       finally{this.uploading=false;}
     },
     async fetchData(){

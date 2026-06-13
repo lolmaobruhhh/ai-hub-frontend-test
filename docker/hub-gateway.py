@@ -989,12 +989,21 @@ class Handler(BaseHTTPRequestHandler):
                     return True
 
                 folder = "characters" if is_char else "world_info"
+                # Canonicalize to hub_{slug}.{ext} so the sync treats it as a
+                # shared card and propagates it to every frontend. Non-canonical
+                # names (e.g. "character.png") are pruned as junk and vanish.
+                import re as _re
+                stem, dot, fext = filename.rpartition(".")
+                stem = stem or filename
+                if not stem.lower().startswith("hub_"):
+                    slug = _re.sub(r"[^a-z0-9]+", "_", stem.lower()).strip("_")[:60] or "character"
+                    filename = f"hub_{slug}.{fext.lower()}"
                 dest_path = DATA_ROOT / "shared" / folder / filename
-                
+
                 with open(dest_path, "wb") as f:
                     f.write(file_data)
-                    
-                self._send_json(200, {"success": True, "path": str(dest_path)})
+
+                self._send_json(200, {"success": True, "path": str(dest_path), "name": filename})
                 return True
             except Exception as e:
                 self._send_json(500, {"error": str(e)})
