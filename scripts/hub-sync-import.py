@@ -1053,6 +1053,7 @@ def sync_shared_symlinks_to_st(state: dict) -> int:
             except OSError:
                 continue
 
+        name = char_name_from_path(path)
         target_name = f"{safe_name(name)}.png"
         card_key = name.strip().lower()
         if card_key in existing_names:
