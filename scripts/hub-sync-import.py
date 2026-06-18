@@ -14,10 +14,12 @@ import mimetypes
 import os
 import re
 import shutil
+import struct
 import sys
 import time
 import urllib.error
 import urllib.request
+import zlib
 from http.cookiejar import CookieJar
 from pathlib import Path
 from uuid import uuid4
@@ -29,6 +31,8 @@ STAGING_MARINARA = DATA_ROOT / "marinara" / "storage" / "import-staging"
 STAGING_LUMIVERSE = DATA_ROOT / "lumiverse" / "import-staging"
 STATE_DIR = DATA_ROOT / ".hub-sync"
 STATE_FILE = STATE_DIR / "import-state.json"
+
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 MARINARA_PORT = int(os.environ.get("MARINARA_PORT", "7862"))
 LUMIVERSE_PORT = int(os.environ.get("LUMIVERSE_PORT", "7861"))
 ST_ROOT = DATA_ROOT / "sillytavern"
@@ -666,6 +670,50 @@ def cleanup_shared_junk(state: dict) -> int:
     return removed
 
 
+def normalize_png(data: bytes) -> bytes | None:
+    """Re-mux a PNG so SillyTavern's strict parser accepts it.
+
+    Marinara/Lumiverse export-png can emit byte-streams with bad chunk CRCs
+    or a missing IEND. Lenient decoders (Marinara/Lumiverse) render them fine,
+    but SillyTavern's png-chunks-extract rejects them with
+    'CRC values for IDAT ... do not match' / '.png ended prematurely: no IEND'.
+    This parses chunks tolerantly, recomputes every CRC32, drops any trailing
+    garbage, and guarantees a single trailing IEND. The embedded tEXt 'chara'
+    /'ccv3' chunks are preserved verbatim. Returns None if the bytes aren't a
+    parseable PNG (caller keeps the original bytes)."""
+    if data[:8] != PNG_MAGIC:
+        return None
+    iend = struct.pack(">I", 0) + b"IEND" + struct.pack(">I", zlib.crc32(b"IEND") & 0xFFFFFFFF)
+    out = bytearray(PNG_MAGIC)
+    pos = 8
+    n = len(data)
+    saw_ihdr = False
+    saw_iend = False
+    while pos + 8 <= n:
+        (length,) = struct.unpack(">I", data[pos : pos + 4])
+        ctype = data[pos + 4 : pos + 8]
+        body_start = pos + 8
+        body_end = body_start + length
+        if length > n or body_end > n:
+            break  # truncated/garbage tail — stop here
+        body = data[body_start:body_end]
+        if ctype == b"IHDR":
+            saw_ihdr = True
+        if ctype == b"IEND":
+            saw_iend = True
+            out += iend
+            break
+        # re-emit chunk with a freshly computed CRC (fixes bad CRCs)
+        out += struct.pack(">I", length) + ctype + body
+        out += struct.pack(">I", zlib.crc32(ctype + body) & 0xFFFFFFFF)
+        pos = body_end + 4  # skip the original (possibly wrong) 4-byte CRC
+    if not saw_ihdr:
+        return None
+    if not saw_iend:
+        out += iend
+    return bytes(out)
+
+
 def write_canonical_export(
     state: dict,
     source: str,
@@ -677,6 +725,14 @@ def write_canonical_export(
     char_dir = SHARED / "characters"
     char_dir.mkdir(parents=True, exist_ok=True)
     filename = canonical_filename(source, name)
+
+    # Repair non-spec PNGs (bad chunk CRCs / missing IEND) from lenient
+    # exporters so SillyTavern's strict png-chunks-extract can read them.
+    if filename.lower().endswith(".png"):
+        fixed = normalize_png(png_bytes)
+        if fixed is not None:
+            png_bytes = fixed
+
     rel = f"characters/{filename}"
     dest = SHARED / rel
     ckey = canonical_key(source, name)
