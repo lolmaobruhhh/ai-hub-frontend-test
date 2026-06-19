@@ -7,9 +7,18 @@ FROM alpine:3.20 AS hub-src
 RUN apk add --no-cache git \
     && git clone --depth 1 https://github.com/lolmaobruhhh/ai-hub-frontend-test.git /hub
 
-FROM ghcr.io/sillytavern/sillytavern:latest AS sillytavern
-FROM ghcr.io/pasta-devs/marinara-engine:lite AS marinara
-FROM ghcr.io/prolix-oc/lumiverse:latest AS lumiverse
+# Upstream images pinned to digests for reproducible builds. Floating tags
+# (:latest / :lite) silently pulled a newer build on every rebuild — that is how
+# Lumiverse jumped versions (migrations 074-087) and can introduce regressions
+# like generate-request validation changes. Bump these deliberately, not by luck.
+# Lumiverse only ships staging-*/latest (no stable channel), so digest-pinning is
+# the ONLY way to freeze it. Never pin Lumiverse OLDER than the migrated /data DB.
+#   sillytavern : 1.18.0
+#   marinara    : lite (no semver tag exists for lite; digest is the only stable pin)
+#   lumiverse   : latest @ 2026-06-19 working build (migrations through 087)
+FROM ghcr.io/sillytavern/sillytavern@sha256:7027bdf302ba8f60705db0118286195c9ab30c9271d1a52f7786d8d6fa235577 AS sillytavern
+FROM ghcr.io/pasta-devs/marinara-engine@sha256:1643df504bb51b9267d5f366361c488ba619ac7773f616ed9ddba1b5de7cb40d AS marinara
+FROM ghcr.io/prolix-oc/lumiverse@sha256:637023307ff848f0c60ef468d438739cc1bdc28d286042f645ee00113233c9a3 AS lumiverse
 
 FROM node:24-bookworm-slim
 
