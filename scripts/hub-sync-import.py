@@ -9,6 +9,8 @@ Canonical files: hub_{slug}.png — ONE global file per character name (shared d
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import mimetypes
 import os
@@ -712,6 +714,108 @@ def normalize_png(data: bytes) -> bytes | None:
     if not saw_iend:
         out += iend
     return bytes(out)
+
+
+# ── Shared-storage character reconcile (add already handled elsewhere; this
+# powers chat-preserving EDIT propagation across Marinara/Lumiverse). Keyed on a
+# content hash of the embedded V2 card JSON — NOT the PNG bytes, which differ on
+# every re-encode and previously caused churn. ─────────────────────────────────
+CARD_TEXT_FIELDS = (
+    "name", "description", "personality", "scenario", "first_mes",
+    "mes_example", "creator", "creator_notes", "system_prompt",
+    "post_history_instructions",
+)
+
+
+def _png_text_chunks(data: bytes) -> dict[str, bytes]:
+    out: dict[str, bytes] = {}
+    if data[:8] != PNG_MAGIC:
+        return out
+    pos = 8
+    n = len(data)
+    while pos + 8 <= n:
+        (length,) = struct.unpack(">I", data[pos : pos + 4])
+        ctype = data[pos + 4 : pos + 8]
+        body_start = pos + 8
+        body_end = body_start + length
+        if length > n or body_end > n:
+            break
+        body = data[body_start:body_end]
+        if ctype == b"tEXt" and b"\x00" in body:
+            kw, val = body.split(b"\x00", 1)
+            out[kw.decode("latin1").lower()] = val
+        if ctype == b"IEND":
+            break
+        pos = body_end + 4
+    return out
+
+
+def card_data_from_png(data: bytes) -> dict | None:
+    chunks = _png_text_chunks(data)
+    for key in ("chara", "ccv3"):
+        if key in chunks:
+            try:
+                raw = base64.b64decode(chunks[key])
+                obj = json.loads(raw.decode("utf-8", errors="replace"))
+            except Exception:
+                continue
+            if isinstance(obj, dict):
+                return obj.get("data") if isinstance(obj.get("data"), dict) else obj
+    return None
+
+
+def normalize_card_data(data) -> dict:
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except Exception:
+            return {}
+    if not isinstance(data, dict):
+        return {}
+    if isinstance(data.get("data"), dict):
+        data = data["data"]
+    return data
+
+
+def read_card_data(path: Path) -> dict | None:
+    try:
+        if path.suffix.lower() == ".json":
+            obj = json.loads(path.read_text(encoding="utf-8"))
+            return normalize_card_data(obj) or None
+        return card_data_from_png(path.read_bytes())
+    except Exception:
+        return None
+
+
+def clean_card_data(data) -> dict:
+    """Return only standard V2 card fields — safe to push to either app
+    (drops app-specific keys like id/avatar_path/timestamps)."""
+    d = normalize_card_data(data)
+    out: dict = {}
+    for f in CARD_TEXT_FIELDS:
+        if d.get(f) is not None:
+            out[f] = d.get(f)
+    if isinstance(d.get("tags"), list):
+        out["tags"] = [str(t) for t in d["tags"]]
+    if isinstance(d.get("alternate_greetings"), list):
+        out["alternate_greetings"] = [str(x) for x in d["alternate_greetings"]]
+    if isinstance(d.get("extensions"), dict):
+        out["extensions"] = d["extensions"]
+    return out
+
+
+def card_hash(data) -> str:
+    d = normalize_card_data(data)
+    norm: dict = {}
+    for f in CARD_TEXT_FIELDS:
+        v = d.get(f)
+        norm[f] = ("" if v is None else str(v)).strip()
+    tags = d.get("tags")
+    norm["tags"] = sorted(str(t).strip().lower() for t in tags if str(t).strip()) if isinstance(tags, list) else []
+    ag = d.get("alternate_greetings")
+    norm["alternate_greetings"] = [str(x).strip() for x in ag] if isinstance(ag, list) else []
+    blob = json.dumps(norm, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()
 
 
 def write_canonical_export(
@@ -1591,6 +1695,188 @@ def import_lorebooks_to_marinara(state: dict) -> int:
     return imported
 
 
+def _slug_for(name: str) -> str:
+    return name_slug(canonical_slug((name or "").strip().lower()))
+
+
+def gather_shared_cards() -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    char_dir = SHARED / "characters"
+    if not char_dir.is_dir():
+        return out
+    for path in sorted(char_dir.iterdir()):
+        if not path.is_file() or not is_importable_global(path.name):
+            continue
+        data = read_card_data(path)
+        if not data:
+            continue
+        name = (normalize_card_data(data).get("name") or char_name_from_path(path)).strip()
+        slug = _slug_for(name)
+        if slug:
+            out[slug] = {"path": path, "data": data, "chash": card_hash(data)}
+    return out
+
+
+def gather_marinara_cards() -> dict[str, dict] | None:
+    if not backend_up(MARINARA_PORT):
+        return None
+    status, payload = http_json("GET", f"http://127.0.0.1:{MARINARA_PORT}/api/characters/")
+    if status >= 400 or not isinstance(payload, list):
+        return None
+    out: dict[str, dict] = {}
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        cid = item.get("id")
+        data = normalize_card_data(item.get("data"))
+        name = (data.get("name") or "").strip()
+        if not cid or not name:
+            continue
+        out[_slug_for(name)] = {"id": str(cid), "data": data, "chash": card_hash(data)}
+    return out
+
+
+def gather_lumiverse_cards(opener, auth_headers) -> dict[str, dict] | None:
+    base = f"http://127.0.0.1:{LUMIVERSE_PORT}"
+    status, payload = http_json(
+        "GET", f"{base}/api/v1/characters?limit=500&offset=0",
+        headers=auth_headers, opener=opener,
+    )
+    if status >= 400 or not isinstance(payload, dict):
+        return None
+    chars = payload.get("data") or []
+    if not isinstance(chars, list):
+        return None
+    out: dict[str, dict] = {}
+    for item in chars:
+        if not isinstance(item, dict):
+            continue
+        cid = item.get("id")
+        name = (item.get("name") or "").strip()
+        if not cid or not name:
+            continue
+        out[_slug_for(name)] = {"id": str(cid), "data": item, "chash": card_hash(item)}
+    return out
+
+
+def reconcile_character_edits(state: dict) -> int:
+    """Propagate in-place EDITS across surfaces (chats preserved). A surface is
+    treated as the editor only when its current card hash differs from the hash
+    we last recorded for THAT surface — so it doesn't matter which app exported
+    to /data/shared last (that ordering was the old race). No deletions here."""
+    rec = state.setdefault("card_hash", {})
+    for key in ("shared", "marinara", "lumiverse"):
+        rec.setdefault(key, {})
+
+    shared_map = gather_shared_cards()
+    mar_map = gather_marinara_cards()  # None when down
+    lum_session = lumiverse_session() if backend_up(LUMIVERSE_PORT) else None
+    lum_map = gather_lumiverse_cards(*lum_session) if lum_session else None
+
+    present = {"shared": shared_map}
+    if mar_map is not None:
+        present["marinara"] = mar_map
+    if lum_map is not None:
+        present["lumiverse"] = lum_map
+
+    slugs: set[str] = set()
+    for m in present.values():
+        slugs.update(m.keys())
+
+    updates = 0
+    for slug in sorted(slugs):
+        cur = {s: m[slug]["chash"] for s, m in present.items() if slug in m}
+        if not cur:
+            continue
+        editors = [s for s, h in cur.items() if rec[s].get(slug) is not None and rec[s][slug] != h]
+        if not editors:
+            # Baseline unseen surfaces so future edits are detectable.
+            for s, h in cur.items():
+                rec[s].setdefault(slug, h)
+            continue
+
+        editor_hashes = {cur[s] for s in editors}
+        if len(editor_hashes) == 1:
+            auth = editors[0]
+        else:
+            auth = "shared" if "shared" in editors else ("marinara" if "marinara" in editors else editors[0])
+            log(f"reconcile conflict for '{slug}': editors={editors} — choosing {auth}")
+        auth_hash = cur[auth]
+        auth_data = clean_card_data(present[auth][slug]["data"])
+        if not auth_data.get("name"):
+            for s, h in cur.items():
+                rec[s][slug] = h
+            continue
+
+        for s in cur:
+            if s == auth or cur[s] == auth_hash:
+                continue
+            try:
+                if s == "marinara":
+                    cid = mar_map[slug]["id"]
+                    st, _ = http_json(
+                        "PATCH", f"http://127.0.0.1:{MARINARA_PORT}/api/characters/{cid}",
+                        body={"data": auth_data, "skipVersionSnapshot": True},
+                    )
+                    ok = st < 400
+                elif s == "lumiverse":
+                    cid = lum_map[slug]["id"]
+                    st, _ = http_json(
+                        "PUT", f"http://127.0.0.1:{LUMIVERSE_PORT}/api/v1/characters/{cid}",
+                        body=auth_data, headers=lum_session[1], opener=lum_session[0],
+                    )
+                    ok = st < 400
+                else:  # shared file — pull the authoritative app's export PNG so ST/storage follow
+                    ok = _write_shared_from_app(auth, slug, mar_map, lum_map, lum_session, shared_map)
+                if ok:
+                    updates += 1
+                    log(f"reconcile: updated {s} ← {auth} edit: '{auth_data['name']}'")
+                else:
+                    log(f"reconcile: failed to update {s} for '{slug}' (HTTP {st if s != 'shared' else 'n/a'})")
+                    auth_hash = None  # don't mark converged if a push failed
+            except Exception as exc:
+                log(f"reconcile error updating {s} for '{slug}': {exc}")
+                auth_hash = None
+
+        # Mark converged only if nothing failed; else leave records so we retry.
+        if auth_hash is not None:
+            for s in cur:
+                rec[s][slug] = auth_hash
+    return updates
+
+
+def _write_shared_from_app(auth, slug, mar_map, lum_map, lum_session, shared_map) -> bool:
+    if auth == "marinara":
+        cid = mar_map[slug]["id"]
+        status, png = http_bytes(f"http://127.0.0.1:{MARINARA_PORT}/api/characters/{cid}/export-png")
+    elif auth == "lumiverse":
+        cid = lum_map[slug]["id"]
+        status, png = http_bytes(
+            f"http://127.0.0.1:{LUMIVERSE_PORT}/api/v1/characters/{cid}/export?format=png",
+            headers=lum_session[1], opener=lum_session[0],
+        )
+    else:
+        return False
+    if status >= 400 or not png:
+        return False
+    fixed = normalize_png(png)
+    if fixed is not None:
+        png = fixed
+    # Reuse the existing canonical path if present, else build hub_{slug}.png.
+    dest = shared_map[slug]["path"] if slug in shared_map else (SHARED / "characters" / f"hub_{slug}.png")
+    tmp = dest.with_suffix(dest.suffix + ".hubsync-tmp")
+    try:
+        tmp.write_bytes(png)
+        tmp.replace(dest)
+        return True
+    except OSError:
+        try:
+            dest.write_bytes(png)
+            return True
+        except OSError:
+            return False
+
+
 def main() -> int:
     try:
         log(f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} syncing shared library")
@@ -1611,11 +1897,13 @@ def main() -> int:
             n_chars_lumiverse = import_characters_to_lumiverse(state)
             n_chars_st = sync_shared_symlinks_to_st(state)
             n_worlds = import_lorebooks_to_marinara(state)
+            n_edits = reconcile_character_edits(state)
         else:
             n_chars_marinara = 0
             n_chars_lumiverse = 0
             n_chars_st = 0
             n_worlds = 0
+            n_edits = 0
 
         save_state(state)
         log(
@@ -1623,7 +1911,7 @@ def main() -> int:
             f"exported: marinara +{n_export_marinara}, lumiverse +{n_export_lumiverse}, st +{n_export_st}, "
             f"lorebooks (marinara +{n_export_marinara_lb}, lumiverse +{n_export_lumiverse_lb}); "
             f"imported: marinara +{n_chars_marinara}, lumiverse +{n_chars_lumiverse}, "
-            f"st +{n_chars_st}, lorebooks +{n_worlds}"
+            f"st +{n_chars_st}, lorebooks +{n_worlds}; edits synced +{n_edits}"
         )
         return 0
     except Exception as exc:
