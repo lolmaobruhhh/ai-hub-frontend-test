@@ -16,9 +16,9 @@ RUN apk add --no-cache git \
 #   sillytavern : 1.18.0
 #   marinara    : latest (full engine — sidecar local model + embeddings + memory recall)
 #   lumiverse   : latest @ 2026-06-19 working build (migrations through 087)
-FROM ghcr.io/sillytavern/sillytavern@sha256:7027bdf302ba8f60705db0118286195c9ab30c9271d1a52f7786d8d6fa235577 AS sillytavern
-FROM ghcr.io/pasta-devs/marinara-engine@sha256:fe2ae72007c7d4653cc3a55e2e2f2c642f7bd09361b02e4805940dece279a7e0 AS marinara
-FROM ghcr.io/prolix-oc/lumiverse@sha256:637023307ff848f0c60ef468d438739cc1bdc28d286042f645ee00113233c9a3 AS lumiverse
+FROM ghcr.io/sillytavern/sillytavern:latest AS sillytavern
+FROM ghcr.io/pasta-devs/marinara-engine:lite AS marinara
+FROM ghcr.io/prolix-oc/lumiverse:latest AS lumiverse
 
 FROM node:24-bookworm-slim
 
