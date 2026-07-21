@@ -1,5 +1,3 @@
 .git
 .gitignore
-README.md
-*.md
-!config/**
+_data

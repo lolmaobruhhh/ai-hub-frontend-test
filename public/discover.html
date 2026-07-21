@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Character Discovery · Lumiverse</title>
+<link rel="icon" href="/favicon.ico" type="image/x-icon" />
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0d12;
+    --bg2: #10131b;
+    --card: #151925;
+    --card-hover: #1b2130;
+    --border: #232a3a;
+    --border-hi: #33405c;
+    --text: #e9edf6;
+    --muted: #8b95ab;
+    --muted2: #626c82;
+    --accent: #7c8cff;
+    --accent-hi: #97a4ff;
+    --accent-soft: #232a52;
+    --good: #46d39a;
+    --bad: #ff6b6b;
+    --warn: #ffce54;
+    --pill: #1e2434;
+    --radius: 14px;
+    --shadow: 0 6px 24px rgba(0,0,0,0.35);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: radial-gradient(1200px 600px at 50% -10%, #171c2b, var(--bg)) fixed;
+    color: var(--text);
+    font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  a { color: var(--accent-hi); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  header.topbar {
+    position: sticky; top: 0; z-index: 30;
+    backdrop-filter: blur(12px);
+    background: rgba(11,13,18,0.82);
+    border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner {
+    max-width: 1400px; margin: 0 auto; padding: 0.85rem 1.25rem;
+    display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: baseline; gap: 0.6rem; margin-right: auto; }
+  .brand h1 { font-size: 1.15rem; margin: 0; font-weight: 700; letter-spacing: 0.2px; }
+  .brand .sub { color: var(--muted); font-size: 0.85rem; }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    padding: 0.5rem 0.9rem; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--card);
+    color: var(--text); font-size: 0.88rem;
+  }
+  .back-link:hover { border-color: var(--border-hi); text-decoration: none; }
+
+  .tabs { display: flex; gap: 0.4rem; }
+  .tab {
+    padding: 0.5rem 1rem; border-radius: 10px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--card);
+    color: var(--muted); font-size: 0.9rem; font-weight: 600;
+    transition: all 0.15s;
+  }
+  .tab:hover { color: var(--text); border-color: var(--border-hi); }
+  .tab.active { background: var(--accent-soft); color: var(--accent-hi); border-color: var(--accent); }
+  .tab.soon { opacity: 0.4; cursor: not-allowed; }
+
+  .controls {
+    max-width: 1400px; margin: 0 auto; padding: 1.1rem 1.25rem 0.4rem;
+    display: flex; flex-direction: column; gap: 0.75rem;
+  }
+  .row { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+  .grow { flex: 1 1 260px; }
+  .field {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 0.55rem 0.8rem; color: var(--text);
+    font-size: 0.9rem; outline: none; min-width: 0;
+  }
+  .field:focus { border-color: var(--accent); }
+  select.field { cursor: pointer; }
+  .search-wrap { position: relative; flex: 1 1 320px; display: flex; }
+  .search-wrap input { width: 100%; padding-left: 2.2rem; }
+  .search-wrap svg { position: absolute; left: 0.7rem; top: 50%; transform: translateY(-50%); color: var(--muted2); }
+
+  .btn {
+    padding: 0.55rem 0.95rem; border-radius: 10px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--card);
+    color: var(--text); font-size: 0.88rem; font-weight: 600; transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--border-hi); }
+  .btn.toggle.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-hi); }
+  .btn.small { padding: 0.4rem 0.7rem; font-size: 0.8rem; }
+
+  .tag-input-wrap { display: flex; flex-direction: column; gap: 0.35rem; flex: 1 1 100%; }
+  .tag-line { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  .tag-line .label { font-size: 0.78rem; color: var(--muted); min-width: 62px; }
+  .chips { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    padding: 0.25rem 0.55rem; border-radius: 999px; font-size: 0.78rem;
+    background: var(--pill); border: 1px solid var(--border);
+  }
+  .chip.inc { border-color: #2f5a44; color: #7fe3bb; }
+  .chip.exc { border-color: #5a2f38; color: #ffb0b0; }
+  .chip button { background: none; border: none; color: inherit; cursor: pointer; font-size: 0.95rem; line-height: 1; padding: 0; }
+  .tag-add { width: 150px; }
+
+  main { max-width: 1400px; margin: 0 auto; padding: 1rem 1.25rem 4rem; }
+  .meta-line { color: var(--muted); font-size: 0.85rem; margin: 0.4rem 0 1rem; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+
+  .grid {
+    display: grid; gap: 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden; display: flex; flex-direction: column;
+    transition: transform 0.15s, border-color 0.15s; position: relative;
+  }
+  .card:hover { transform: translateY(-3px); border-color: var(--border-hi); box-shadow: var(--shadow); }
+  .thumb-wrap { position: relative; aspect-ratio: 3/4; background: var(--bg2); overflow: hidden; }
+  .thumb { width: 100%; height: 100%; object-fit: cover; display: block; transition: filter 0.2s, transform 0.3s; }
+  .card:hover .thumb { transform: scale(1.04); }
+  .thumb.blurred { filter: blur(18px) brightness(0.7); }
+  .nsfw-badge {
+    position: absolute; top: 0.5rem; left: 0.5rem; z-index: 2;
+    background: rgba(255,107,107,0.92); color: #fff; font-size: 0.65rem; font-weight: 700;
+    padding: 0.15rem 0.4rem; border-radius: 6px; letter-spacing: 0.5px;
+  }
+  .thumb-fallback { width: 100%; height: 100%; display: grid; place-items: center; color: var(--muted2); font-size: 2.5rem; }
+  .card-body { padding: 0.7rem 0.75rem 0.8rem; display: flex; flex-direction: column; gap: 0.4rem; flex: 1; }
+  .card-name { font-weight: 700; font-size: 0.95rem; line-height: 1.25; }
+  .card-tagline { color: var(--muted); font-size: 0.8rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2rem; }
+  .card-creator { color: var(--muted2); font-size: 0.75rem; }
+  .card-tags { display: flex; gap: 0.25rem; flex-wrap: wrap; }
+  .mini-tag { font-size: 0.68rem; color: var(--accent-hi); background: var(--accent-soft); padding: 0.1rem 0.4rem; border-radius: 6px; }
+  .card-stats { display: flex; gap: 0.75rem; color: var(--muted); font-size: 0.72rem; margin-top: auto; flex-wrap: wrap; }
+  .card-stats span { display: inline-flex; align-items: center; gap: 0.25rem; }
+  .card-actions { display: flex; gap: 0.4rem; margin-top: 0.5rem; }
+  .import-btn { flex: 1; justify-content: center; display: inline-flex; align-items: center; gap: 0.4rem; }
+  .import-btn.busy { opacity: 0.7; cursor: wait; }
+  .import-btn.done { background: #15352a; border-color: var(--good); color: var(--good); }
+  .import-btn.err { background: #351a1e; border-color: var(--bad); color: var(--bad); }
+  .icon-link { padding: 0.5rem 0.55rem; display: inline-grid; place-items: center; }
+
+  .sentinel { height: 40px; }
+  .state { text-align: center; padding: 3rem 1rem; color: var(--muted); }
+  .state.err { color: var(--bad); }
+  .spinner { width: 26px; height: 26px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 1.5rem auto; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .skeleton { background: linear-gradient(90deg, var(--card) 25%, var(--card-hover) 50%, var(--card) 75%); background-size: 200% 100%; animation: shimmer 1.3s infinite; border-radius: var(--radius); aspect-ratio: 3/4.6; }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+
+  .toast {
+    position: fixed; bottom: 1.25rem; left: 50%; transform: translateX(-50%);
+    background: var(--card); border: 1px solid var(--border-hi); color: var(--text);
+    padding: 0.7rem 1.1rem; border-radius: 12px; box-shadow: var(--shadow);
+    font-size: 0.88rem; z-index: 50; opacity: 0; pointer-events: none; transition: opacity 0.25s, transform 0.25s;
+    max-width: 90vw;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
+  .toast.good { border-color: var(--good); }
+  .toast.bad { border-color: var(--bad); }
+  @media (max-width: 560px) {
+    .brand .sub { display: none; }
+    .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.7rem; }
+  }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <h1>Character Discovery</h1>
+      <span class="sub">browse &amp; import into Lumiverse</span>
+    </div>
+    <div class="tabs" id="source-tabs">
+      <div class="tab active" data-source="chub">Chub.ai</div>
+      <div class="tab" data-source="wyvern">Wyvern</div>
+      <div class="tab soon" title="Coming soon">DataCat</div>
+      <div class="tab soon" title="Coming soon">Pygmalion</div>
+    </div>
+    <a class="back-link" href="/">← Back to Lumiverse</a>
+  </div>
+</header>
+
+<section class="controls">
+  <div class="row">
+    <div class="search-wrap">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input id="search" class="field" type="search" placeholder="Search characters…" autocomplete="off" />
+    </div>
+    <!-- Chub sort -->
+    <select id="sort" class="field" data-source="chub">
+      <option value="download_count">Most downloaded</option>
+      <option value="trending_downloads">Trending</option>
+      <option value="star_count">Most starred</option>
+      <option value="n_favorites">Most favorited</option>
+      <option value="rating">Highest rated</option>
+      <option value="created_at">Newest</option>
+      <option value="last_activity_at">Recently active</option>
+      <option value="newcomer">Newcomer</option>
+      <option value="name">Name (A–Z)</option>
+    </select>
+    <button id="asc-toggle" class="btn toggle" data-source="chub" title="Toggle ascending/descending">↓ Desc</button>
+    <!-- Wyvern feed -->
+    <select id="feed" class="field" data-source="wyvern" style="display:none">
+      <option value="popular">Popular</option>
+      <option value="public">Newest / All</option>
+      <option value="curator-picks">Curator picks</option>
+    </select>
+    <button id="nsfw-toggle" class="btn toggle" title="Include NSFW characters">🔞 NSFW off</button>
+  </div>
+  <!-- Chub tag filters -->
+  <div class="tag-input-wrap" data-source="chub">
+    <div class="tag-line">
+      <span class="label">Include</span>
+      <div class="chips" id="chips-inc"></div>
+      <input id="tag-inc" class="field tag-add" placeholder="+ tag (Enter)" autocomplete="off" />
+    </div>
+    <div class="tag-line">
+      <span class="label">Exclude</span>
+      <div class="chips" id="chips-exc"></div>
+      <input id="tag-exc" class="field tag-add" placeholder="− tag (Enter)" autocomplete="off" />
+    </div>
+  </div>
+</section>
+
+<main>
+  <div class="meta-line" id="meta"></div>
+  <div class="grid" id="grid"></div>
+  <div id="status"></div>
+  <div class="sentinel" id="sentinel"></div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+// ─────────────────────────────────────────────────────────────────────────
+// Per-source adapters. Adding DataCat/Pygmalion later = add one adapter object
+// with the same shape (buildUrl, parse, import) and a tab.
+// ─────────────────────────────────────────────────────────────────────────
+
+const state = {
+  source: "chub",
+  search: "",
+  sort: "download_count",
+  asc: false,
+  feed: "popular",
+  nsfw: false,
+  incTags: [],
+  excTags: [],
+  page: 1,
+  loading: false,
+  done: false,
+  seen: new Set(),
+};
+
+const PAGE_SIZE = 24;
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function num(n) {
+  if (n == null || isNaN(n)) return null;
+  n = Number(n);
+  if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, "") + "k";
+  return String(n);
+}
+
+const adapters = {
+  // ── CHUB.AI ────────────────────────────────────────────────────────────
+  chub: {
+    buildUrl() {
+      const p = new URLSearchParams();
+      p.set("namespace", "characters");
+      p.set("first", PAGE_SIZE);
+      p.set("page", state.page);
+      p.set("sort", state.sort);
+      p.set("asc", state.asc ? "true" : "false");
+      if (state.search.trim()) p.set("search", state.search.trim());
+      if (state.incTags.length) p.set("topics", state.incTags.join(","));
+      if (state.excTags.length) p.set("excludetopics", state.excTags.join(","));
+      p.set("nsfw", state.nsfw ? "true" : "false");
+      return "/hub-proxy/chub/search?" + p.toString();
+    },
+    parse(json) {
+      const d = json && json.data ? json.data : {};
+      const nodes = Array.isArray(d.nodes) ? d.nodes : [];
+      const total = d.count;
+      const items = nodes.map(n => ({
+        key: "chub:" + (n.fullPath || n.id),
+        id: n.id,
+        fullPath: n.fullPath,
+        name: n.name || "Unnamed",
+        tagline: n.tagline || n.description || "",
+        creator: (n.fullPath || "").split("/")[0] || "",
+        tags: Array.isArray(n.topics) ? n.topics : [],
+        thumb: n.avatar_url || n.max_res_url || "",
+        nsfw: !!n.nsfw_image,
+        sourceUrl: n.fullPath ? "https://chub.ai/characters/" + n.fullPath : null,
+        stats: [
+          ["⬇", num(n.nMessages ?? n.nChats)],
+          ["★", num(n.starCount ?? n.n_favorites)],
+          ["♥", num(n.rating != null ? Math.round(n.rating * 10) / 10 : null)],
+          ["◆", num(n.nTokens)],
+        ],
+      }));
+      return { items, total };
+    },
+    async importItem(item) {
+      // Native path: Lumiverse recognizes chub.ai URLs in /import-url.
+      const res = await fetch("/api/v1/characters/import-url", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: "https://chub.ai/characters/" + item.fullPath }),
+      });
+      return res;
+    },
+  },
+
+  // ── WYVERN ───────────────────────────────────────────────────────────────
+  wyvern: {
+    buildUrl() {
+      const p = new URLSearchParams();
+      let feed = state.feed;
+      if (state.nsfw && (feed === "public" || feed === "popular")) feed = feed + "/mature";
+      p.set("feed", feed);
+      p.set("page", state.page);
+      if (state.search.trim()) p.set("query", state.search.trim());
+      return "/hub-proxy/wyvern/list?" + p.toString();
+    },
+    parse(json) {
+      let arr = [];
+      let total = null;
+      if (Array.isArray(json)) arr = json;
+      else if (json && Array.isArray(json.characters)) { arr = json.characters; total = json.total; }
+      const items = arr.map(n => {
+        const id = n.id || n._id;
+        return {
+          key: "wyvern:" + id,
+          id,
+          name: n.name || "Unnamed",
+          tagline: n.tagline || n.description || "",
+          creator: (n.creator && (n.creator.username || n.creator.name)) || "",
+          tags: Array.isArray(n.tags) ? n.tags : (Array.isArray(n.community_tags) ? n.community_tags : []),
+          thumb: n.avatar || "",
+          nsfw: false,
+          sourceUrl: n.wyldfire_code ? "https://app.wyvern.chat/characters/" + id : null,
+          stats: [
+            ["♥", num(n.likes)],
+            ["★", num(n.rating)],
+            ["◆", num(n.token_count)],
+          ],
+        };
+      });
+      return { items, total };
+    },
+    async importItem(item) {
+      // Wyvern isn't natively supported → fetch full card, convert to V2 JSON,
+      // upload via the multipart importer.
+      const cres = await fetch("/hub-proxy/wyvern/card?id=" + encodeURIComponent(item.id), { credentials: "omit" });
+      if (!cres.ok) return cres;
+      const c = await cres.json();
+      const card = {
+        spec: "chara_card_v2",
+        spec_version: "2.0",
+        data: {
+          name: c.name || item.name,
+          description: c.description || "",
+          personality: c.personality || "",
+          scenario: c.scenario || "",
+          first_mes: c.first_mes || (Array.isArray(c.greetings) ? c.greetings[0] : "") || "",
+          mes_example: c.mes_example || "",
+          creator_notes: c.creator_notes || "",
+          system_prompt: c.system_prompt || "",
+          post_history_instructions: c.post_history_instructions || "",
+          alternate_greetings: Array.isArray(c.alternate_greetings) ? c.alternate_greetings
+            : (Array.isArray(c.greetings) ? c.greetings.slice(1) : []),
+          tags: Array.isArray(c.tags) ? c.tags : [],
+          creator: (c.creator && (c.creator.username || c.creator.name)) || "",
+          character_version: "",
+          extensions: {},
+        },
+      };
+      const blob = new Blob([JSON.stringify(card)], { type: "application/json" });
+      const form = new FormData();
+      const safe = (card.data.name || "character").replace(/[^\w.-]+/g, "_").slice(0, 60);
+      form.append("file", blob, safe + ".json");
+      return fetch("/api/v1/characters/import", { method: "POST", credentials: "same-origin", body: form });
+    },
+  },
+};
+
+// ── DOM refs ────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const grid = $("grid"), statusEl = $("status"), metaEl = $("meta");
+let toastTimer = null;
+
+function toast(msg, kind = "") {
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = "toast show " + kind;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = "toast " + kind; }, 3200);
+}
+
+function applySourceVisibility() {
+  document.querySelectorAll("[data-source]").forEach(el => {
+    if (el.classList.contains("tab")) return;
+    el.style.display = el.dataset.source === state.source ? "" : "none";
+  });
+}
+
+function renderChips() {
+  const mk = (arr, cls, kind) => arr.map((t, i) =>
+    `<span class="chip ${cls}">${esc(t)}<button data-kind="${kind}" data-i="${i}">×</button></span>`).join("");
+  $("chips-inc").innerHTML = mk(state.incTags, "inc", "inc");
+  $("chips-exc").innerHTML = mk(state.excTags, "exc", "exc");
+  document.querySelectorAll(".chip button").forEach(b => b.onclick = () => {
+    (b.dataset.kind === "inc" ? state.incTags : state.excTags).splice(+b.dataset.i, 1);
+    renderChips(); reset();
+  });
+}
+
+function cardHtml(item) {
+  const tags = item.tags.slice(0, 3).map(t => `<span class="mini-tag">${esc(t)}</span>`).join("");
+  const stats = item.stats.filter(s => s[1] != null)
+    .map(s => `<span>${s[0]} ${esc(s[1])}</span>`).join("");
+  const blurClass = (item.nsfw && !state.nsfw) ? " blurred" : "";
+  const thumb = item.thumb
+    ? `<img class="thumb${blurClass}" loading="lazy" src="${esc(item.thumb)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'thumb-fallback',textContent:'🎭'}))" />`
+    : `<div class="thumb-fallback">🎭</div>`;
+  const srcLink = item.sourceUrl
+    ? `<a class="btn icon-link" href="${esc(item.sourceUrl)}" target="_blank" rel="noopener" title="View source">↗</a>` : "";
+  return `<article class="card" data-key="${esc(item.key)}">
+    <div class="thumb-wrap">${item.nsfw ? '<span class="nsfw-badge">NSFW</span>' : ''}${thumb}</div>
+    <div class="card-body">
+      <div class="card-name">${esc(item.name)}</div>
+      <div class="card-tagline">${esc(item.tagline)}</div>
+      ${item.creator ? `<div class="card-creator">by ${esc(item.creator)}</div>` : ""}
+      <div class="card-tags">${tags}</div>
+      <div class="card-stats">${stats}</div>
+      <div class="card-actions">
+        <button class="btn import-btn" data-key="${esc(item.key)}">⤓ Import</button>
+        ${srcLink}
+      </div>
+    </div>
+  </article>`;
+}
+
+const itemMap = new Map();
+
+function appendItems(items) {
+  const frag = [];
+  for (const it of items) {
+    if (state.seen.has(it.key)) continue;
+    state.seen.add(it.key);
+    itemMap.set(it.key, it);
+    frag.push(cardHtml(it));
+  }
+  if (frag.length) grid.insertAdjacentHTML("beforeend", frag.join(""));
+  grid.querySelectorAll(".import-btn:not([data-bound])").forEach(b => {
+    b.setAttribute("data-bound", "1");
+    b.onclick = () => doImport(b);
+  });
+}
+
+async function doImport(btn) {
+  const item = itemMap.get(btn.dataset.key);
+  if (!item || btn.classList.contains("busy") || btn.classList.contains("done")) return;
+  btn.classList.remove("err");
+  btn.classList.add("busy");
+  btn.textContent = "⏳ Importing…";
+  try {
+    const res = await adapters[state.source].importItem(item);
+    if (res.status === 401 || res.status === 403) {
+      btn.classList.remove("busy"); btn.classList.add("err"); btn.textContent = "✗ Log in first";
+      toast("Log in to Lumiverse (open the main app) before importing.", "bad");
+      return;
+    }
+    if (!res.ok) {
+      let msg = "HTTP " + res.status;
+      try { const j = await res.json(); msg = j.error || j.message || msg; } catch (_) {}
+      btn.classList.remove("busy"); btn.classList.add("err"); btn.textContent = "✗ Failed";
+      toast("Import failed: " + msg, "bad");
+      return;
+    }
+    btn.classList.remove("busy"); btn.classList.add("done"); btn.textContent = "✓ Imported";
+    toast("Imported “" + item.name + "” into Lumiverse.", "good");
+  } catch (e) {
+    btn.classList.remove("busy"); btn.classList.add("err"); btn.textContent = "✗ Error";
+    toast("Import error: " + e.message, "bad");
+  }
+}
+
+async function loadMore() {
+  if (state.loading || state.done) return;
+  state.loading = true;
+  statusEl.innerHTML = '<div class="spinner"></div>';
+  const ad = adapters[state.source];
+  try {
+    const res = await fetch(ad.buildUrl(), { credentials: "omit" });
+    if (!res.ok) {
+      let detail = "HTTP " + res.status;
+      try { const j = await res.json(); detail = j.error + (j.detail ? " — " + j.detail : ""); } catch (_) {}
+      statusEl.innerHTML = `<div class="state err">Couldn’t load from ${esc(state.source)}.<br><small>${esc(detail)}</small></div>`;
+      state.loading = false; state.done = true; return;
+    }
+    const json = await res.json();
+    const { items, total } = ad.parse(json);
+    appendItems(items);
+    if (total != null) metaEl.textContent = total.toLocaleString() + " characters found";
+    else metaEl.textContent = state.seen.size + " loaded";
+    if (!items.length || items.every(i => !i)) state.done = true;
+    else state.page += 1;
+    statusEl.innerHTML = "";
+    if (state.seen.size === 0) statusEl.innerHTML = '<div class="state">No characters found. Try different filters.</div>';
+    else if (state.done) statusEl.innerHTML = '<div class="state">— end of results —</div>';
+  } catch (e) {
+    statusEl.innerHTML = `<div class="state err">Network error: ${esc(e.message)}</div>`;
+    state.done = true;
+  }
+  state.loading = false;
+}
+
+function reset() {
+  state.page = 1; state.done = false; state.seen = new Set(); itemMap.clear();
+  grid.innerHTML = ""; statusEl.innerHTML = ""; metaEl.textContent = "";
+  loadMore();
+}
+
+// ── control wiring ────────────────────────────────────────────────────────
+document.querySelectorAll("#source-tabs .tab:not(.soon)").forEach(tab => {
+  tab.onclick = () => {
+    document.querySelectorAll("#source-tabs .tab").forEach(t => t.classList.remove("active"));
+    tab.classList.add("active");
+    state.source = tab.dataset.source;
+    applySourceVisibility();
+    reset();
+  };
+});
+
+let searchTimer = null;
+$("search").addEventListener("input", e => {
+  state.search = e.target.value;
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(reset, 380);
+});
+
+$("sort").addEventListener("change", e => { state.sort = e.target.value; reset(); });
+$("feed").addEventListener("change", e => { state.feed = e.target.value; reset(); });
+
+$("asc-toggle").addEventListener("click", e => {
+  state.asc = !state.asc;
+  e.target.classList.toggle("on", state.asc);
+  e.target.textContent = state.asc ? "↑ Asc" : "↓ Desc";
+  reset();
+});
+
+$("nsfw-toggle").addEventListener("click", e => {
+  state.nsfw = !state.nsfw;
+  e.target.classList.toggle("on", state.nsfw);
+  e.target.textContent = state.nsfw ? "🔞 NSFW on" : "🔞 NSFW off";
+  reset();
+});
+
+function bindTagAdder(inputId, arr) {
+  $(inputId).addEventListener("keydown", e => {
+    if (e.key !== "Enter") return;
+    const v = e.target.value.trim();
+    if (v && !arr.includes(v)) { arr.push(v); renderChips(); reset(); }
+    e.target.value = "";
+  });
+}
+bindTagAdder("tag-inc", state.incTags);
+bindTagAdder("tag-exc", state.excTags);
+
+// ── infinite scroll ────────────────────────────────────────────────────────
+const io = new IntersectionObserver(entries => {
+  if (entries.some(en => en.isIntersecting)) loadMore();
+}, { rootMargin: "600px" });
+io.observe($("sentinel"));
+
+// ── init ────────────────────────────────────────────────────────────────
+applySourceVisibility();
+renderChips();
+reset();
+</script>
+</body>
+</html>
