@@ -33,11 +33,16 @@ if "fwdPrefix" in text and "x-forwarded-prefix" in text:
     raise SystemExit(0)
 
 # --- Lumiverse 1.2.0+ (BetterAuth 1.7): verify shape, no rewrite needed ---
-anchor_path = "const pathname = rewriteLegacySsoCallbackPath(url.pathname);"
-anchor_host = 'const host = c.req.header("x-forwarded-host") || c.req.header("host");'
-anchor_proto = 'const proto = c.req.header("x-forwarded-proto") || "http";'
-anchor_rew = "const rewritten = new URL(pathname + url.search, origin);"
-missing = [a for a in (anchor_path, anchor_host, anchor_proto, anchor_rew) if a not in text]
+# host/proto are header-read checks, not exact lines, because the Dockerfile's
+# split-first seds rewrite those lines after this script runs at build time;
+# boot-time re-runs must verify cleanly against the already-seded file.
+checks = (
+    ("const pathname = rewriteLegacySsoCallbackPath(url.pathname);", "rewriteLegacySsoCallbackPath line"),
+    ("const rewritten = new URL(pathname + url.search, origin);", "computed-origin rewritten URL line"),
+    ('c.req.header("x-forwarded-host")', "x-forwarded-host header read"),
+    ('c.req.header("x-forwarded-proto")', "x-forwarded-proto header read"),
+)
+missing = [label for needle, label in checks if needle not in text]
 if not missing:
     print("[hub] lumiverse 1.2.0 auth handler shape verified — upstream honors forwarded headers, no rewrite needed", flush=True)
     raise SystemExit(0)
