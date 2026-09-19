@@ -1,16 +1,27 @@
 #!/usr/bin/env bash
-# BetterAuth baseURL includes /apps/lumiverse — auth handler must rewrite requests
-# with X-Forwarded-Prefix or sign-in returns 404 behind the hub gateway.
+# BetterAuth behind the hub gateway.
+#
+# History: BetterAuth <=1.5 (better-call 1.3.x) matched routes with a lenient
+# split-anywhere basePath, so we prepended X-Forwarded-Prefix to the handler
+# URL to hand BetterAuth the public subpath.
+#
+# Lumiverse 1.2.0 (BetterAuth 1.7.2 / better-call 1.4.0) matches routes with a
+# strict startsWith(basePath + "/") — a prefix-prepended path 404s. The hub
+# gateway already strips /apps/<app> before proxying and the 1.2.0 handler
+# natively honors X-Forwarded-Proto/Host, so with AUTH_BASE_URL at the root
+# origin the unmodified code routes correctly both as the active root app and
+# via the /apps/lumiverse subpath. For 1.2.0+ this script therefore only
+# VERIFIES the handler shape (fail the build loudly if upstream changes
+# again); the legacy prepend below is kept for pre-1.2.0 images.
 set -euo pipefail
 
-APP_TS="/apps/lumiverse/src/app.ts"
+APP_TS="${1:-/apps/lumiverse/src/app.ts}"
 if [[ ! -f "${APP_TS}" ]]; then
   echo "[hub] lumiverse app.ts not found — skip auth patch" >&2
   exit 0
 fi
 
 python3 - "${APP_TS}" <<'PY'
-import re
 import sys
 from pathlib import Path
 
@@ -21,28 +32,33 @@ if "fwdPrefix" in text and "x-forwarded-prefix" in text:
     print("[hub] lumiverse auth patch already applied", flush=True)
     raise SystemExit(0)
 
-replacement = (
-    'const fwdPrefix = (c.req.header("x-forwarded-prefix") || "").replace(/\\/$/, "");\n'
-    '    const rewritten = new URL((fwdPrefix + url.pathname).replace(/\\/\\/+/g, "/") + url.search, `${proto}://${host}`);'
-)
+# --- Lumiverse 1.2.0+ (BetterAuth 1.7): verify shape, no rewrite needed ---
+anchor_path = "const pathname = rewriteLegacySsoCallbackPath(url.pathname);"
+anchor_host = 'const host = c.req.header("x-forwarded-host") || c.req.header("host");'
+anchor_proto = 'const proto = c.req.header("x-forwarded-proto") || "http";'
+anchor_rew = "const rewritten = new URL(pathname + url.search, origin);"
+missing = [a for a in (anchor_path, anchor_host, anchor_proto, anchor_rew) if a not in text]
+if not missing:
+    print("[hub] lumiverse 1.2.0 auth handler shape verified — upstream honors forwarded headers, no rewrite needed", flush=True)
+    raise SystemExit(0)
 
-patterns = [
-    r"const rewritten = new URL\(url\.pathname \+ url\.search, `\$\{proto\}://\$\{host\}`\);",
-    r"const rewritten=new URL\(url\.pathname\+url\.search,`\$\{proto\}://\$\{host\}`\);",
-]
+# --- Pre-1.2.0 images: prepend X-Forwarded-Prefix (lenient-router era) ---
+# Backslash via chr(92): this heredoc contains no literal backslashes.
+BS = chr(92)
+FWD_DECL = 'const fwdPrefix = (c.req.header("x-forwarded-prefix") || "").replace(/' + BS + '/$/, "");'
+LEGACY_REWRITTEN = 'const rewritten = new URL((fwdPrefix + url.pathname).replace(/' + BS + '/' + BS + '/+/g, "/") + url.search, `${proto}://${host}`);'
 
-patched = False
-for pattern in patterns:
-    new_text, n = re.subn(pattern, replacement, text, count=1)
-    if n:
-        text = new_text
-        patched = True
-        break
+for old in (
+    "const rewritten = new URL(url.pathname + url.search, `${proto}://${host}`);",
+    "const rewritten=new URL(url.pathname+url.search,`${proto}://${host}`);",
+):
+    if old in text:
+        t = text.replace(old, FWD_DECL + "\n    " + LEGACY_REWRITTEN, 1)
+        path.write_text(t, encoding="utf-8")
+        print("[hub] patched lumiverse BetterAuth URL rewrite (legacy shape) for subpath hub", flush=True)
+        raise SystemExit(0)
 
-if not patched:
-    print("[hub] ERROR: lumiverse auth rewrite pattern not found in app.ts", flush=True)
-    raise SystemExit(1)
-
-path.write_text(text, encoding="utf-8")
-print("[hub] patched lumiverse BetterAuth URL rewrite for subpath hub", flush=True)
+print("[hub] ERROR: lumiverse auth handler shape not recognized; missing 1.2.0 anchors: " + "; ".join(missing), flush=True)
+print("[hub] ERROR: lumiverse auth rewrite pattern not found in app.ts", flush=True)
+raise SystemExit(1)
 PY
