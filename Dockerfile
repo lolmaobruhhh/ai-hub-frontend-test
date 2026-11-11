@@ -13,12 +13,12 @@ RUN apk add --no-cache git \
 # like generate-request validation changes. Bump these deliberately, not by luck.
 # Lumiverse only ships staging-*/latest (no stable channel), so digest-pinning is
 # the ONLY way to freeze it. Never pin Lumiverse OLDER than the migrated /data DB.
-#   sillytavern : 1.18.0
-#   marinara    : latest (full engine — sidecar local model + embeddings + memory recall)
-#   lumiverse   : latest @ 2026-06-19 working build (migrations through 087)
-FROM ghcr.io/sillytavern/sillytavern:latest AS sillytavern
-FROM ghcr.io/pasta-devs/marinara-engine:lite AS marinara
-FROM ghcr.io/prolix-oc/lumiverse:latest AS lumiverse
+#   sillytavern : latest @ 2026-11-11 digest
+#   marinara    : latest full-engine @ 2026-11-11 digest (sidecar local model + embeddings + memory recall)
+#   lumiverse   : v1.2.5 @ 2026-11-11 digest (auth origin resolution in src/auth/request-origin.ts)
+FROM ghcr.io/sillytavern/sillytavern@sha256:b712eb8609f2d9b9f820b581fecfc7cd400c50a6c6533287cbbd368c4fb1d060 AS sillytavern
+FROM ghcr.io/pasta-devs/marinara-engine@sha256:a3b30f9247eefc1ac41f8823812d472765ecb4465903a18dc9e5a6bc4bd79394 AS marinara
+FROM ghcr.io/prolix-oc/lumiverse@sha256:9954e0d064e9b57d576e739c234fdc4b565c416d57e3d51c66712627952fd8b5 AS lumiverse
 
 FROM node:24-bookworm-slim
 
